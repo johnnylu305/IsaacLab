@@ -27,10 +27,11 @@ from omni.isaac.core import World
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.utils.prims import get_prim_at_path
 from omni.isaac.core.prims import XFormPrim
-from omni.isaac.lab.sim.spawners.from_files import UsdFileCfg, spawn_from_usd
+from omni.isaac.lab.sim.spawners.from_files import UsdFileCfg, spawn_from_usd, spawn_from_multiple_usd
 from omni.isaac.lab.sim.spawners.sensors import spawn_camera, PinholeCameraCfg
 
 from omni.isaac.lab.sensors import TiledCamera, TiledCameraCfg, save_images_to_file
+#from multi_object import spawn_multi_object_randomly
 import random
 import glob
 import os
@@ -114,8 +115,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
 
     # scene
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
-    
+    #scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=64, env_spacing=2.5, replicate_physics=True)
+
     
     thrust_to_weight = 1.9
     moment_scale = 0.01
@@ -168,15 +170,19 @@ class QuadcopterEnv(DirectRLEnv):
     def _setup_scene(self):
         
         #scene_path = r'./Set_C_converted/BAT1_SETC_HOUSE1/BAT1_SETC_HOUSE1.usd'
-        scenes_path = sorted(glob.glob(os.path.join(r'/mnt/zhuzhuan/Documents/MAD3D/IsaacLab/Set_C_converted/BAT1_SETC_HOUSE1', '**', '*[!_non_metric].usd'), recursive=True))
+        scenes_path = sorted(glob.glob(os.path.join(r'/mnt/zhuzhuan/Documents/MAD3D/IsaacLab/Set_C_converted', '**', '*[!_non_metric].usd'), recursive=True))
         scene_path= random.choice(scenes_path)
-        print(scene_path)
+        #print(scene_path)
         #scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*[!_non_metric].usd'), recursive=True))
         #import re
         #regex_pattern = re.compile(r'/mnt/zhuzhuan/Documents/MAD3D/IsaacLab/Set_C_converted/BAT1_SETC_HOUSE1/*[^_non_metric]\.usd$')
 
-        spawn_from_usd(prim_path="/World/envs/env_.*/Scene", cfg=UsdFileCfg(usd_path=scene_path))       
-        
+        #spawn_from_usd(prim_path="/World/envs/env_.*/Scene", cfg=UsdFileCfg(usd_path=scene_path))       
+        print(scenes_path)
+        cfg_list = []
+        for scene_path in scenes_path:
+            cfg_list.append(UsdFileCfg(usd_path=scene_path))
+        spawn_from_multiple_usd(prim_path="/World/envs/env_.*/Scene", my_asset_list=cfg_list)
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         self._tiled_camera = TiledCamera(self.cfg.tiled_camera)
