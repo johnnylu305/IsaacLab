@@ -31,27 +31,56 @@ from omni.isaac.lab.sim.spawners.from_files import UsdFileCfg, spawn_from_usd, s
 from omni.isaac.lab.sim.spawners.sensors import spawn_camera, PinholeCameraCfg
 from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth
 from omni.isaac.lab.utils.math import transform_points, unproject_depth, quat_mul
-from omni.isaac.lab.sensors import TiledCamera, TiledCameraCfg, save_images_to_file, CameraCfg, Camera
+from omni.isaac.lab.sensors import TiledCamera, TiledCameraCfg, save_images_to_file, CameraCfg, Camera, ContactSensorCfg,ContactSensor
 #from multi_object import spawn_multi_object_randomly
 import random
 import glob
 import os
 from scipy.spatial.transform import Rotation as R
 import numpy as np
-from pxr import Sdf, UsdLux, Gf, UsdGeom, Usd
+from pxr import Sdf, UsdLux, Gf, UsdGeom, Usd, PhysxSchema, PhysicsSchemaTools, Vt, UsdPhysics
 from PIL import Image
 import omni.isaac.core.utils.numpy.rotations as rot_utils
 import matplotlib.pyplot as plt
 from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth
 from omni.isaac.lab.markers.config import RAY_CASTER_MARKER_CFG
 import math
+import omni
+from omni.physx import get_physx_scene_query_interface
+from omni.isaac.core.articulations import ArticulationView
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'  # Use GPU if available
 cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
 cfg.markers["hit"].radius = 0.002
 pc_markers = VisualizationMarkers(cfg)
         
-        
+class OverlapShapeDemo:
+    def __init__(self, stage, collision_prim_path):
+        self._stage = stage
+        self._collision_prim_path = collision_prim_path
+
+    def report_hit(self, hit):
+        #print("hit", hit)
+        print("Collision detected with object:", hit.rigid_body)
+        hitColor = Vt.Vec3fArray([Gf.Vec3f(1.0, 0.0, 0.0)])  # Red color for collision
+        usdGeom = UsdGeom.Cube.Get(self._stage, hit.rigid_body)
+        if usdGeom:
+            usdGeom.GetDisplayColorAttr().Set(hitColor)
+        return True
+
+    def check_collision(self):
+        path_tuple = PhysicsSchemaTools.encodeSdfPath(Sdf.Path(self._collision_prim_path))
+        numHits = get_physx_scene_query_interface().overlap_shape(path_tuple[0], path_tuple[1], self.report_hit, False)
+        if numHits>0:
+            print("numHits", numHits)
+            print("numHits", numHits)
+            print("numHits", numHits)
+            print("numHits", numHits)
+        #else:            
+            #import pdb; pdb.set_trace()
+        print("numHits", numHits)
+
 class QuadcopterEnvWindow(BaseEnvWindow):
     """Window manager for the Quadcopter environment."""
 
@@ -247,22 +276,24 @@ class OccupancyGrid:
         camera_position = torch.tensor(camera_position).cuda()
 
         #for pt in points:
-        #start_pt = (camera_position).unsqueeze(0).long()
-        for i in range(points.shape[0]):
-            start_pts = camera_position[i].long()
+        start_pts = (camera_position).unsqueeze(0).long()
+        #for i in range(points.shape[0]):
+            #start_pts = camera_position[i].long()
+        #    start_pts = camera_position.long()
 
-            end_pts = (points[i]).long()
-            # Generate Bresenham path from the camera to the point
-            #bresenham_path = self.bresenhamline(start_pt, end_pt, max_iter=-1)
-            bresenham_path = bresenhamline((end_pts/self.resolution).long(), (start_pts/self.resolution).long(), max_iter=-1)
-            bresenham_path += torch.tensor([32, 32, 0], dtype=torch.long).cuda()
-            bresenham_path = bresenham_path.clamp(0, 63)
+        end_pts = (points).long()
+        # Generate Bresenham path from the camera to the point
+        #bresenham_path = self.bresenhamline(start_pt, end_pt, max_iter=-1)
+        #import pdb; pdb.set_trace()
+        bresenham_path = bresenhamline((end_pts/self.resolution).long(), (start_pts/self.resolution).long(), max_iter=-1)
+        #bresenham_path += torch.tensor([32, 32, 0], dtype=torch.long).cuda()
+        bresenham_path = bresenham_path.clamp(0, 63)
 
-            if bresenham_path is not None:
-                # Update the grid for free space
-                self.update_log_odds(bresenham_path[:-1], occupied=False)
-                # Update the grid for occupied space at the end point
-                #self.update_log_odds(bresenham_path[-1:], occupied=True)
+        if bresenham_path is not None:
+            # Update the grid for free space
+            self.update_log_odds(bresenham_path[:-1], occupied=False)
+            # Update the grid for occupied space at the end point
+            #self.update_log_odds(bresenham_path[-1:], occupied=True)
             
 
 @configclass
@@ -273,6 +304,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 100,
         disable_contact_processing=True,
+        physx=sim_utils.PhysxCfg(use_gpu=False),
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
@@ -298,6 +330,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # robot
     robot: ArticulationCfg = CRAZYFLIE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
 
+
 #      sensors
 #     camera = CameraCfg(
 #         prim_path="/World/envs/env_.*/Robot/body/camera",
@@ -314,7 +347,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     
     tiled_camera:CameraCfg =CameraCfg(
         prim_path="/World/envs/env_.*/Robot/body/Camera",
-        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.1), convention="world"),
+        offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.05), convention="world"),
         #offset=TiledCameraCfg.OffsetCfg(pos=(-7.0, 0.0, 3.0), rot=(0.9945, 0.0, 0.1045, 0.0), convention="world"),
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
@@ -341,10 +374,19 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         height=80,
     )
     '''
+
+    
+    #from omni.isaac.lab.sim.schemas import activate_contact_sensors
+    
+    #activate_contact_sensors("/World/envs/env_.*/Robot")
+    contact_forces = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/Robot/.*", update_period=0.0, history_length=6, debug_vis=True
+    )
+    
     # scene
     #scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
 
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=16, env_spacing=5, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=32, env_spacing=5, replicate_physics=True)
 
     
     thrust_to_weight = 1.9
@@ -385,10 +427,14 @@ class QuadcopterEnv(DirectRLEnv):
         self._episode_sums = {
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
-                "lin_vel",
-                "ang_vel",
-                "distance_to_goal",
+                "coverage_ratio",
+                "collision",
             ]
+            #for key in [
+            #    "lin_vel",
+            #    "ang_vel",
+            #    "distance_to_goal",
+            #]
         }
         # Get specific body indices
         self._body_id = self._robot.find_bodies("body")[0]
@@ -402,7 +448,94 @@ class QuadcopterEnv(DirectRLEnv):
         self.pose = torch.zeros((self.num_envs,7)).cuda()
         self.current_position = torch.tensor([[2.5, 2.5, 2.5]], device=self.device).repeat(self.num_envs, 1)
         self.current_orientation = torch.tensor([[1, 0, 0, 0]], device=self.device).repeat(self.num_envs, 1)
+        self.robot_view = ArticulationView("/World/envs/env_.*/Robot")
         
+
+    def get_all_mesh_prim_path(self, root):
+        root_prim = get_prim_at_path(prim_path=root)
+        stack = [root_prim]
+        mesh_prim_path = []
+        # While there are nodes in the stack
+        while stack:
+            # Pop the last node from the stack
+            node = stack.pop()
+            if node.GetTypeName() == "Mesh":
+                mesh_prim_path.append(node.GetPath().pathString)
+            # Get the children of the current node
+            children = node.GetChildren()
+        
+            # Iterate over each child
+            for child in children:
+                # Add the child to the stack for further traversal
+                stack.append(child)
+        return mesh_prim_path
+
+    def get_minmax_mesh_coordinates(self, mesh_prim):
+        # Access the mesh's point positions in local space
+        mesh = UsdGeom.Mesh(mesh_prim)
+        points_attr = mesh.GetPointsAttr()
+        points = points_attr.Get()
+
+        # Get the world transformation matrix for the mesh
+        xformable = UsdGeom.Xformable(mesh_prim)
+        world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+
+        # Transform each point to world coordinates
+        transformed_points = [world_transform.Transform(point) for point in points]
+
+        # Calculate the maximum coordinates
+        max_coords = Gf.Vec3f(float('-inf'), float('-inf'), float('-inf'))
+        min_coords = Gf.Vec3f(float('inf'), float('inf'), float('inf'))
+        for point in transformed_points:
+            max_coords[0] = max(max_coords[0], point[0])
+            max_coords[1] = max(max_coords[1], point[1])
+            max_coords[2] = max(max_coords[2], point[2])
+
+            min_coords[0] = min(min_coords[0], point[0])
+            min_coords[1] = min(min_coords[1], point[1])
+            min_coords[2] = min(min_coords[2], point[2])
+
+        return max_coords, min_coords
+
+    def get_scale(self, mesh_prim_path, desired_len):
+        
+        max_x, max_y, max_z = -1e10, -1e10, -1e10
+        min_x, min_y, min_z = 1e10, 1e10, 1e10
+
+        for prim_path in mesh_prim_path:
+            mesh_prim = get_prim_at_path(prim_path=prim_path)
+            max_coords, min_coords = self.get_minmax_mesh_coordinates(mesh_prim)
+    
+            #print(max_coords, min_coords)
+
+            max_x = max(max_x, max_coords[0])
+            max_y = max(max_y, max_coords[1])
+            max_z = max(max_z, max_coords[2])
+            min_x = min(min_x, min_coords[0])
+            min_y = min(min_y, min_coords[1])
+            min_z = min(min_z, min_coords[2])
+        extent = (max_x-min_x, max_y-min_y, max_z-min_z)
+        max_side = max(extent)
+        print(f"Max Side: {max_side} meters")
+        return desired_len/max_side
+
+    def rescale_scene(self, scene_prim_root="/World/envs/env_0/Scene"):
+
+        mesh_prim_path = self.get_all_mesh_prim_path(scene_prim_root)
+        print(mesh_prim_path)
+        #max_len = 15
+        max_len = 1.5
+        scale_factor = self.get_scale(mesh_prim_path, max_len)
+        print(scale_factor)
+        print(f"Scaling factor: {scale_factor}")
+
+        # Apply the scaling to the mesh
+        for prim_path in mesh_prim_path:
+            mesh_prim = get_prim_at_path(prim_path=prim_path)
+            xform = UsdGeom.Xformable(mesh_prim)
+            scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
+            xform.ClearXformOpOrder()  # Clear any existing transformations
+            xform.AddTransformOp().Set(scale_transform)
 
     def _setup_scene(self):
         
@@ -422,7 +555,75 @@ class QuadcopterEnv(DirectRLEnv):
         spawn_from_multiple_usd(prim_path="/World/envs/env_.*/Scene", my_asset_list=cfg_list)
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
+        
+        
+        #Define the Crazyflie path and collision prim path
+        
+        collision_prim_path = "/World/envs/env_0/Robot/body/body_collision/geometry"
+        #collision node need to remove from body node to parent
+        crazyflie_path = "/World/envs/env_0/Robot"
+        
+        stage = omni.usd.get_context().get_stage()
+        # Ensure the robot and collision geometry exist
+        if not stage.GetPrimAtPath(crazyflie_path).IsValid():
+            print(f"Robot at path {crazyflie_path} does not exist.")
+        else:
+            # Access the Crazyflie robot and collision geometry
+            crazyflie_prim = stage.GetPrimAtPath(crazyflie_path)
+            collision_prim = stage.GetPrimAtPath(collision_prim_path)
+        
+            # Ensure the geometry is a UsdGeom.Xformable
+            if not crazyflie_prim.IsA(UsdGeom.Xformable) or not collision_prim.IsA(UsdGeom.Xformable):
+                print("The geometry type is not supported. Please check the robot type.")
+            else:
+                # Retrieve the scale factor for /World/Crazyflie/body
+                #body_prim_path = "/World/envs/env_0/Scene/Robot/body"
+                #body_prim_path = "/World/Crazyflie"
+                #body_prim = stage.GetPrimAtPath(body_prim_path)
+                # disable gravity to avoid falling
+                # Access the RigidBodyAPI
+                # apply rigid body API and schema
+                # physicsAPI = UsdPhysics.RigidBodyAPI.Apply(body_prim)
+        
+                #/World/Crazyflie/body.physxRigidBody:disableGravity
+                
+                #disable_gravity_attr = body_prim.GetAttribute("physxRigidBody:disableGravity")     
+                #body_prim.physxRigidBody:disableGravity=True
+                #import pdb; pdb.set_trace()   
+                #disable_gravity_attr.Set(True)
+        
+                # print(attr)
+                #print(f"Gravity disabled for {body_prim.GetPath()}")
+                #body_xform = UsdGeom.Xformable(body_prim)
+                body_scale_factor = Gf.Vec3f(1.0, 1.0, 5.0)
+                #for op in body_xform.GetOrderedXformOps():
+                #    if op.GetOpType() == UsdGeom.XformOp.TypeScale:
+                #        body_scale_factor = op.Get()
+                #        break
+        
+                # Retrieve the scale factor for /World/Crazyflie/body/body_collision/geometry
+                collision_xform = UsdGeom.Xformable(collision_prim)
+        
+                # Define the desired size in world space
+                #desired_size = 5.0  # meters
+                #desired_size = 3.0  # meters
+                desired_size = 0.5  # meters
+        
+                # Calculate the scale to be applied to the collision box to make it 3x3x3 meters in world space
+                final_scale_factor = Gf.Vec3f(
+                    desired_size / body_scale_factor[0],
+                    desired_size / body_scale_factor[1],
+                    desired_size / body_scale_factor[2]
+                )
+                print(f"Final scale factor to be applied: {final_scale_factor}")
+        
+                # Apply the final scale factor to the collision geometry
+                collision_xform.ClearXformOpOrder()
+                collision_xform.AddScaleOp().Set(final_scale_factor)
+        
+        #self.rescale_scene()
         #self._tiled_camera = TiledCamera(self.cfg.tiled_camera)
+        #self.contact_sensor = ContactSensor(self.cfg.contact_forces)
         self._tiled_camera = Camera(self.cfg.tiled_camera)
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
@@ -434,11 +635,15 @@ class QuadcopterEnv(DirectRLEnv):
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
+        grid_size = (64, 64, 64)
+        self.grid = OccupancyGrid(grid_size, device=self.device)
         
         #spawn_camera(prim_path="/World/envs/env_.*/Robot/body/camera", cfg=PinholeCameraCfg(data_types=["rgb", "distance_to_image_plane"]))
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self._actions = actions.clone().clamp(-1.0, 1.0)
+        self._xyz=self._actions[:, :3]*1
+        self._yaw=self._actions[:,-1]
         self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
 
@@ -477,18 +682,26 @@ class QuadcopterEnv(DirectRLEnv):
         return rotation_angle
 
     def _apply_action(self):
-        #self._robot.set_world_pose(position=[0,0,0], orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, 0]), degrees=False))
+        #init_root_pos_w, init_root_quat_w = self.robot_view.get_world_poses()
+        #init_root_pos_w-=0.1
+        #self.robot_view.set_world_poses(init_root_pos_w, init_root_quat_w)
         #self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
-        radius = 1        # Radius of the cylinder
-        height = 0.5       # Height of the cylinder
+        radius = 0.5        # Radius of the cylinder
+        
+        height = 0.2       # Height of the cylinder
         num_points = 100  # Number of points in the trajectory
 
         # Angular coordinates
         theta = np.linspace(0, 2 * np.pi, num_points)
-
+        
+        radius+=0.01*self._index
         # X and Y coordinates
         x = radius * np.cos(theta)
         y = radius * np.sin(theta)
+
+
+        #x = np.linspace(0, height, num_points)
+        #y = np.linspace(0, height, num_points)
 
         # Z coordinates (extending along the height of the cylinder)
         z = np.linspace(0, height, num_points)
@@ -507,6 +720,8 @@ class QuadcopterEnv(DirectRLEnv):
         current_position = torch.from_numpy(current_position)
         orientation = torch.from_numpy(orientation)
         
+        #orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, self._yaw*180]), degrees=True)
+        
         #import pdb; pdb.set_trace()
         #env_ids = self.env_ids
         env_ids = torch.arange(self.num_envs).cuda()
@@ -517,7 +732,10 @@ class QuadcopterEnv(DirectRLEnv):
         root_state = torch.zeros((self.num_envs,13)).cuda()
         #self.default_root_state[:,:3]=current_position.unsqueeze(0)
         #self.default_root_state[:,3:7]=orientation.unsqueeze(0)
-        root_state[:,:3]=current_position.unsqueeze(0)
+        #root_state[:,:3]=current_position.unsqueeze(0)
+        print(self._xyz.shape)
+        print(self._terrain.env_origins[self.env_ids].shape)
+        root_state[:,:3]=self._xyz + self._terrain.env_origins
         #self.current_position=root_state[:,:3]
         
         root_state[:,3:7]=orientation.unsqueeze(0)
@@ -529,9 +747,11 @@ class QuadcopterEnv(DirectRLEnv):
         #print(env_ids)
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
+        self._robot.write_data_to_sim()
         #self._robot.write_joint_state_to_sim(root_state[:, :7], root_state[:, 7:], None, env_ids)
         #print(self._index)
         
+        #self.robot_view.set_world_poses(root_state[:, :3], root_state[:, 3:7])
         #print(default_root_state)
         #import pdb; pdb.set_trace()
         #joint_pos = self._robot.data.default_joint_pos[env_ids]
@@ -632,6 +852,7 @@ class QuadcopterEnv(DirectRLEnv):
         
         
         print("-------------------------------")
+        #print(self.contact_sensor)
         print("Received shape of rgb   image: ", self._tiled_camera.data.output["rgb"].shape)
         #print("Received shape of depth image: ", self._tiled_camera.data.output["depth"].shape)
         print("Received shape of depth image: ", self._tiled_camera.data.output["distance_to_image_plane"].shape)
@@ -648,9 +869,9 @@ class QuadcopterEnv(DirectRLEnv):
         
         #import matplotlib.pyplot as plt
         #plt.imshow(self._tiled_camera.data.output["depth"][0,:,:,0].cpu())
-        plt.imsave('camera_image/depth_{}.png'.format(self._index),self._tiled_camera.data.output["distance_to_image_plane"][0,:,:].clone().cpu(), cmap='gray')
+        #plt.imsave('camera_image/depth_{}.png'.format(self._index),self._tiled_camera.data.output["distance_to_image_plane"][0,:,:].clone().cpu(), cmap='gray')
         #import pdb; pdb.set_trace()
-        plt.imsave('camera_image/rgb_{}.png'.format(self._index),(self._tiled_camera.data.output["rgb"][0,:,:].cpu().numpy()).astype(np.uint8))
+        #plt.imsave('camera_image/rgb_{}.png'.format(self._index),(self._tiled_camera.data.output["rgb"][0,:,:].cpu().numpy()).astype(np.uint8))
         #depth_image = self._tiled_camera.data.output["depth"].clone().clamp(-32,32)
         depth_image = self._tiled_camera.data.output["distance_to_image_plane"].clone()
         #import pdb; pdb.set_trace()
@@ -677,7 +898,7 @@ class QuadcopterEnv(DirectRLEnv):
         
 
         if points_3d_world.size()[0] > 0:
-            pc_markers.visualize(translations=pointcloud)
+            pc_markers.visualize(translations=points_3d_world[0])
                 
         #print(points_3d_world)
         # # Add pointcloud to scene
@@ -696,46 +917,65 @@ class QuadcopterEnv(DirectRLEnv):
                     
         # plt.imsave('extension_examples/user_examples/camera_image/depth_{}.png'.format(self._index),cliped_depth, cmap='gray')
         
-#        offset=torch.tensor([32,32,0]).cuda()
-#        points_3d_world+=offset
-#
-#        import time
-#        current_time = time.perf_counter()
-#        # resolution = 1
-#        # zero = 0
-#        # points = torch.from_numpy(points).cuda()
-#        grid_size = (64, 64, 64)
-#
-#        self.grid = OccupancyGrid(grid_size, device=device)
-#        self.grid.update_log_odds(points_3d_world[0], occupied=True)
-#
-#        #self.grid.trace_path_and_update(self._tiled_camera.data.pos_w, points_3d_world)
-#
-#        # print(new_pcd.points)
-#        self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
-#        print('occupancy grid time:')
-#        self.probability_grid = self.probability_grid.cpu().numpy()
-#
-#        print(time.perf_counter()-current_time)
-#
-#        self.probability_grid = np.where(self.probability_grid<=0.5, 1, 0)
-#        #import pdb; pdb.set_trace()
-#        #occupancy_grid = np.where(self.probability_grid<=0.5, 1, 0)
-#        print(np.unique(self.probability_grid), np.sum(self.probability_grid))
-#        # Iterate over each slice
-#        env_size_x, env_size_y, env_size_z = 30, 30, 30
-#        grid_size_x, grid_size_y, grid_size_z = 64, 64, 64
-#        #grid_size_x, grid_size_y, grid_size_z = 100, 100, 100
-#        org_x, org_y = env_size_x/2., env_size_y/2.
-#        cell_size = min(env_size_x/grid_size_x, env_size_y/grid_size_y)  # meters per cell
-#        slice_height = env_size_z / grid_size_z  # height of each slice in meters
-#        
-#        output='occ_test'
-#        for i in range(grid_size_z):                
-#            #self.create_blocks_from_occupancy(self.probability_grid[:,:,i], cell_size, i*slice_height, i)
-#            image_filename = f"occupancy_map_slice_{i}.png"
-#            save_occupancy_grid_as_image(self.probability_grid[:,:,i], os.path.join(output, image_filename))
-#        #import pdb; pdb.set_trace()
+        offset=(self._terrain.env_origins).unsqueeze(1)
+        
+        
+        #offset=torch.tensor([0,0,0]).cuda()
+        points_3d_world-=offset
+        points_3d_world = points_3d_world[~torch.isnan(points_3d_world).any(dim=2)]
+
+        import time
+        current_time = time.perf_counter()
+        # resolution = 1
+        # zero = 0
+        # points = torch.from_numpy(points).cuda()
+        #print(self._terrain.env_origins[self.env_ids])
+        #print(points_3d_world[:,0].max())
+        #print(points_3d_world[:,0].min())
+        #print(points_3d_world[:,1].max())
+        #print(points_3d_world[:,1].min())
+        #print(points_3d_world[:,2].max())
+        #print(points_3d_world[:,2].min())
+      
+        #import pdb; pdb.set_trace()
+        #points_3d_world += offset
+        points_3d_world = points_3d_world.clamp(-0.99,0.99)
+        points_3d_world = (points_3d_world*32)
+        offset=torch.tensor([32,32,0]).cuda()
+        points_3d_world+=offset
+        
+        self.grid.update_log_odds(points_3d_world, occupied=True)
+        
+        #import pdb; pdb.set_trace()
+        self.grid.trace_path_and_update(self._tiled_camera.data.pos_w[0]-self._terrain.env_origins[0], points_3d_world)
+
+        # print(new_pcd.points)
+        self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
+        
+        self.occupancy_grid = torch.where(self.probability_grid<=0.5, 1, 0)
+        print('occupancy grid time:')
+        self.probability_grid = self.probability_grid.cpu().numpy()
+
+        print(time.perf_counter()-current_time)
+
+        self.probability_grid = np.where(self.probability_grid<=0.5, 1, 0)
+        #import pdb; pdb.set_trace()
+        
+        print(np.unique(self.probability_grid), np.sum(self.probability_grid))
+        # Iterate over each slice
+        env_size_x, env_size_y, env_size_z = 30, 30, 30
+        grid_size_x, grid_size_y, grid_size_z = 64, 64, 64
+        #grid_size_x, grid_size_y, grid_size_z = 100, 100, 100
+        org_x, org_y = env_size_x/2., env_size_y/2.
+        cell_size = min(env_size_x/grid_size_x, env_size_y/grid_size_y)  # meters per cell
+        slice_height = env_size_z / grid_size_z  # height of each slice in meters
+
+        output='occ_test'
+        for i in range(grid_size_z):                
+            #self.create_blocks_from_occupancy(self.probability_grid[:,:,i], cell_size, i*slice_height, i)
+            image_filename = f"occupancy_map_slice_{i}.png"
+            save_occupancy_grid_as_image(self.probability_grid[:,:,i], os.path.join(output, image_filename))
+        #import pdb; pdb.set_trace()
 
         desired_pos_b, _ = subtract_frame_transforms(
             self._robot.data.root_state_w[:, :3], self._robot.data.root_state_w[:, 3:7], self._desired_pos_w
@@ -750,6 +990,10 @@ class QuadcopterEnv(DirectRLEnv):
             dim=-1,
         )
         observations = {"policy": obs}
+        stage = omni.usd.get_context().get_stage()
+        collision_prim_path = "/World/envs/env_0/Robot/body/body_collision/geometry"
+        overlap_demo = OverlapShapeDemo(stage, collision_prim_path)
+        overlap_demo.check_collision()
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
@@ -757,12 +1001,20 @@ class QuadcopterEnv(DirectRLEnv):
         ang_vel = torch.sum(torch.square(self._robot.data.root_ang_vel_b), dim=1)
         distance_to_goal = torch.linalg.norm(self._desired_pos_w - self._robot.data.root_pos_w, dim=1)
         distance_to_goal_mapped = 1 - torch.tanh(distance_to_goal / 0.8)
+        #rewards = {
+        #    "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
+        #    "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
+        #    "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
+        #}
+        
         rewards = {
-            "lin_vel": lin_vel * self.cfg.lin_vel_reward_scale * self.step_dt,
-            "ang_vel": ang_vel * self.cfg.ang_vel_reward_scale * self.step_dt,
-            "distance_to_goal": distance_to_goal_mapped * self.cfg.distance_to_goal_reward_scale * self.step_dt,
+            "coverage_ratio": (torch.sum(1-self.occupancy_grid[10:54,10:54,2:30])/(44*44*28)).repeat(32), #to do
+            #"collision": 0, #to do
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+        #reward = rewards["coverage_ratio"]
+        print('coverage_ratio', reward)
+    
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value
@@ -815,21 +1067,21 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
-    def _set_debug_vis_impl(self, debug_vis: bool):
-        # create markers if necessary for the first tome
-        if debug_vis:
-            if not hasattr(self, "goal_pos_visualizer"):
-                marker_cfg = CUBOID_MARKER_CFG.copy()
-                marker_cfg.markers["cuboid"].size = (0.05, 0.05, 0.05)
-                # -- goal pose
-                marker_cfg.prim_path = "/Visuals/Command/goal_position"
-                self.goal_pos_visualizer = VisualizationMarkers(marker_cfg)
-            # set their visibility to true
-            self.goal_pos_visualizer.set_visibility(True)
-        else:
-            if hasattr(self, "goal_pos_visualizer"):
-                self.goal_pos_visualizer.set_visibility(False)
+    # def _set_debug_vis_impl(self, debug_vis: bool):
+    #     # create markers if necessary for the first tome
+    #     if debug_vis:
+    #         if not hasattr(self, "goal_pos_visualizer"):
+    #             marker_cfg = CUBOID_MARKER_CFG.copy()
+    #             marker_cfg.markers["cuboid"].size = (0.05, 0.05, 0.05)
+    #             # -- goal pose
+    #             marker_cfg.prim_path = "/Visuals/Command/goal_position"
+    #             self.goal_pos_visualizer = VisualizationMarkers(marker_cfg)
+    #         # set their visibility to true
+    #         self.goal_pos_visualizer.set_visibility(True)
+    #     else:
+    #         if hasattr(self, "goal_pos_visualizer"):
+    #             self.goal_pos_visualizer.set_visibility(False)
 
-    def _debug_vis_callback(self, event):
-        # update the markers
-        self.goal_pos_visualizer.visualize(self._desired_pos_w)
+    # def _debug_vis_callback(self, event):
+    #     # update the markers
+    #     self.goal_pos_visualizer.visualize(self._desired_pos_w)
