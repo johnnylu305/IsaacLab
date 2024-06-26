@@ -117,9 +117,9 @@ def save_occupancy_grid_as_image(occupancy_grid, filename):
     image = Image.fromarray(image_data, 'RGB')
     # Ensure the directory exists
     os.makedirs(os.path.dirname(filename), exist_ok=True)
-    print(np.array(image).shape)
+    #print(np.array(image).shape)
     image.save(filename)
-    print(f"Saved occupancy map as image: {filename}")
+    #print(f"Saved occupancy map as image: {filename}")
 
 def _bresenhamline_nslope(slope):
     """
@@ -302,7 +302,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 100,
+        dt=1 / 500,
         disable_contact_processing=True,
         physx=sim_utils.PhysxCfg(use_gpu=False),
         physics_material=sim_utils.RigidBodyMaterialCfg(
@@ -344,7 +344,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 #         offset=CameraCfg.OffsetCfg(pos=(0.510, 0.0, 0.015), rot=(0.5, -0.5, 0.5, -0.5), convention="ros"),
 #     )
 #     camera 
-    
+    '''
     tiled_camera:CameraCfg =CameraCfg(
         prim_path="/World/envs/env_.*/Robot/body/Camera",
         offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.05), convention="world"),
@@ -366,15 +366,27 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         #offset=TiledCameraCfg.OffsetCfg(pos=(-0.5, 0.0, 0.05), convention="world"),
         #offset=TiledCameraCfg.OffsetCfg(pos=(-7.0, 0.0, 3.0), rot=(0.9945, 0.0, 0.1045, 0.0), convention="world"),
         data_types=["rgb", "depth"],
-        update_period=0.001,
+        update_period=0.01,
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=200,
+        height=200,
+    )
+    
+    tiled_camera2: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Robot/body/Camera2",
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.05), convention="world"),
+        #offset=TiledCameraCfg.OffsetCfg(pos=(-0.5, 0.0, 0.05), convention="world"),
+        #offset=TiledCameraCfg.OffsetCfg(pos=(-7.0, 0.0, 3.0), rot=(0.9945, 0.0, 0.1045, 0.0), convention="world"),
+        data_types=["rgb", "depth"],
+        update_period=0.01,
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
         ),
         width=80,
         height=80,
     )
-    '''
-
     
     #from omni.isaac.lab.sim.schemas import activate_contact_sensors
     
@@ -386,7 +398,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # scene
     #scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
 
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=32, env_spacing=5, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=50, env_spacing=5, replicate_physics=True)
 
     
     thrust_to_weight = 1.9
@@ -540,7 +552,7 @@ class QuadcopterEnv(DirectRLEnv):
     def _setup_scene(self):
         
         #scene_path = r'./Set_C_converted/BAT1_SETC_HOUSE1/BAT1_SETC_HOUSE1.usd'
-        scenes_path = sorted(glob.glob(os.path.join(r'/mnt/zhuzhuan/Documents/MAD3D/IsaacLab/Set_C_converted', '**', '*[!_non_metric].usd'), recursive=True))
+        scenes_path = sorted(glob.glob(os.path.join(r'/mnt/zhuzhuan/Documents/MAD3D/IsaacLab/Set_C_converted (copy)', '**', '*[!_non_metric].usd'), recursive=True))
         scene_path= random.choice(scenes_path)
         #print(scene_path)
         #scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*[!_non_metric].usd'), recursive=True))
@@ -553,6 +565,7 @@ class QuadcopterEnv(DirectRLEnv):
         for scene_path in scenes_path:
             cfg_list.append(UsdFileCfg(usd_path=scene_path))
         spawn_from_multiple_usd(prim_path="/World/envs/env_.*/Scene", my_asset_list=cfg_list)
+        #import pdb; pdb.set_trace()
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         
@@ -622,9 +635,9 @@ class QuadcopterEnv(DirectRLEnv):
                 collision_xform.AddScaleOp().Set(final_scale_factor)
         
         #self.rescale_scene()
-        #self._tiled_camera = TiledCamera(self.cfg.tiled_camera)
+        self._tiled_camera = TiledCamera(self.cfg.tiled_camera)
         #self.contact_sensor = ContactSensor(self.cfg.contact_forces)
-        self._tiled_camera = Camera(self.cfg.tiled_camera)
+        self._tiled_camera2 = TiledCamera(self.cfg.tiled_camera2)
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -633,7 +646,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.scene.clone_environments(copy_from_source=False)
         self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
         # add lights
-        light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
+        light_cfg = sim_utils.DomeLightCfg(intensity=5000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
         grid_size = (64, 64, 64)
         self.grid = OccupancyGrid(grid_size, device=self.device)
@@ -641,6 +654,12 @@ class QuadcopterEnv(DirectRLEnv):
         #spawn_camera(prim_path="/World/envs/env_.*/Robot/body/camera", cfg=PinholeCameraCfg(data_types=["rgb", "distance_to_image_plane"]))
 
     def _pre_physics_step(self, actions: torch.Tensor):
+        #-self._terrain.env_origins
+        #self._tiled_camera.set_world_poses(self.current_position+self._terrain.env_origins, self.current_orientation, convention="world")
+        camera_targets = self._terrain.env_origins
+        self._tiled_camera.set_world_poses_from_view(self.current_position, camera_targets)
+        #self._tiled_camera.update(dt=self.sim.get_physics_dt())
+        self._tiled_camera._update_buffers_impl(self.env_ids)
         self._actions = actions.clone().clamp(-1.0, 1.0)
         self._xyz=self._actions[:, :3]*1
         self._yaw=self._actions[:,-1]
@@ -715,7 +734,8 @@ class QuadcopterEnv(DirectRLEnv):
         yaw = self.compute_orientation(current_position)
         #print('yaw')
         #print(yaw)
-        orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
+        orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, yaw+np.pi]), degrees=False)
+        #orientation=rot_utils.euler_angles_to_quats(np.array([0, 0, 0]), degrees=False)
         # Assuming x, y, z are PyTorch tensors with the position data and _index is an integer or tensor of indices
         current_position = torch.from_numpy(current_position)
         orientation = torch.from_numpy(orientation)
@@ -732,10 +752,10 @@ class QuadcopterEnv(DirectRLEnv):
         root_state = torch.zeros((self.num_envs,13)).cuda()
         #self.default_root_state[:,:3]=current_position.unsqueeze(0)
         #self.default_root_state[:,3:7]=orientation.unsqueeze(0)
-        #root_state[:,:3]=current_position.unsqueeze(0)
-        print(self._xyz.shape)
-        print(self._terrain.env_origins[self.env_ids].shape)
-        root_state[:,:3]=self._xyz + self._terrain.env_origins
+        root_state[:,:3]=current_position.unsqueeze(0)
+        #print(self._xyz.shape)
+        #print(self._terrain.env_origins[self.env_ids].shape)
+        #root_state[:,:3]=self._xyz + self._terrain.env_origins
         #self.current_position=root_state[:,:3]
         
         root_state[:,3:7]=orientation.unsqueeze(0)
@@ -743,7 +763,7 @@ class QuadcopterEnv(DirectRLEnv):
         root_state[:, :3] += self._terrain.env_origins[env_ids]
         self.current_position=root_state[:,:3]
         self.current_orientation=root_state[:,3:7]
-        print(root_state[0, :7])
+        #print(root_state[0, :7])
         #print(env_ids)
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
@@ -854,17 +874,23 @@ class QuadcopterEnv(DirectRLEnv):
         print("-------------------------------")
         #print(self.contact_sensor)
         print("Received shape of rgb   image: ", self._tiled_camera.data.output["rgb"].shape)
-        #print("Received shape of depth image: ", self._tiled_camera.data.output["depth"].shape)
-        print("Received shape of depth image: ", self._tiled_camera.data.output["distance_to_image_plane"].shape)
+        print("Received shape of depth image: ", self._tiled_camera.data.output["depth"].shape)
+
+        print("Received shape of rgb   image of camera 2: ", self._tiled_camera2.data.output["rgb"].shape)
+        print("Received shape of depth image of camera 2: ", self._tiled_camera2.data.output["depth"].shape)
+        #print("Received shape of depth image: ", self._tiled_camera.data.output["distance_to_image_plane"].shape)
         #print(self._tiled_camera.data.intrinsic_matrices)
         print(self._tiled_camera.data.pos_w[0])
         
         print("-------------------------------")
         
         camera_targets = self._terrain.env_origins
+        #self._tiled_camera.update(dt=self.sim.get_physics_dt())
+        print(self._tiled_camera.data.pos_w)
+        
         #self._tiled_camera.set_world_poses_from_view(self.current_position, camera_targets)
         #self._tiled_camera.set_world_poses(self.current_position, self.current_orientation, convention="world")
-        self._tiled_camera._update_buffers_impl(self.env_ids)
+        #self._tiled_camera._update_buffers_impl(self.env_ids)
         print(self._index)
         
         #import matplotlib.pyplot as plt
@@ -872,20 +898,18 @@ class QuadcopterEnv(DirectRLEnv):
         #plt.imsave('camera_image/depth_{}.png'.format(self._index),self._tiled_camera.data.output["distance_to_image_plane"][0,:,:].clone().cpu(), cmap='gray')
         #import pdb; pdb.set_trace()
         #plt.imsave('camera_image/rgb_{}.png'.format(self._index),(self._tiled_camera.data.output["rgb"][0,:,:].cpu().numpy()).astype(np.uint8))
-        #depth_image = self._tiled_camera.data.output["depth"].clone().clamp(-32,32)
-        depth_image = self._tiled_camera.data.output["distance_to_image_plane"].clone()
+        depth_image = self._tiled_camera.data.output["depth"].clone().clamp(-32,32)
+        
+        #depth_image = self._tiled_camera.data.output["distance_to_image_plane"].clone()
         #import pdb; pdb.set_trace()
         rgb_image = self._tiled_camera.data.output["rgb"].clone()
-
+        save_images_to_file(rgb_image,f"camera_image/depth_{self._index}.png")
 
         points_3d_cam = unproject_depth(depth_image, self._tiled_camera.data.intrinsic_matrices)
         points_3d_world = transform_points(points_3d_cam, self._tiled_camera.data.pos_w, self._tiled_camera.data.quat_w_ros)
         
         #points_3d_world = transform_points(points_3d_cam, self.current_position, self.current_orientation)
         
-        
-        
-
         #points_3d_world = points_3d_world.transpose(1,3)
         #import pdb; pdb.set_trace()
         pointcloud = create_pointcloud_from_depth(
@@ -974,7 +998,7 @@ class QuadcopterEnv(DirectRLEnv):
         for i in range(grid_size_z):                
             #self.create_blocks_from_occupancy(self.probability_grid[:,:,i], cell_size, i*slice_height, i)
             image_filename = f"occupancy_map_slice_{i}.png"
-            save_occupancy_grid_as_image(self.probability_grid[:,:,i], os.path.join(output, image_filename))
+            #save_occupancy_grid_as_image(self.probability_grid[:,:,i], os.path.join(output, image_filename))
         #import pdb; pdb.set_trace()
 
         desired_pos_b, _ = subtract_frame_transforms(
@@ -1008,7 +1032,7 @@ class QuadcopterEnv(DirectRLEnv):
         #}
         
         rewards = {
-            "coverage_ratio": (torch.sum(1-self.occupancy_grid[10:54,10:54,2:30])/(44*44*28)).repeat(32), #to do
+            "coverage_ratio": (torch.sum(1-self.occupancy_grid[10:54,10:54,2:30])/(44*44*28)).repeat(self.num_envs), #to do
             #"collision": 0, #to do
         }
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
