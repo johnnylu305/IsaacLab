@@ -228,34 +228,6 @@ def bresenhamline(start, end, max_iter=5):
     # Return the points as a single array
     return _bresenhamlines(start, end, max_iter).reshape(-1, start.shape[-1])
 
-def dis_to_z(dist_images, intrinsic_matrix):
-    # Extract parameters from the intrinsic matrix
-    f_x = intrinsic_matrix[:, 0, 0]  # Focal length in x
-    f_y = intrinsic_matrix[:, 1, 1]  # Focal length in y
-    c_x = intrinsic_matrix[:, 0, 2]  # Principal point x
-    c_y = intrinsic_matrix[:, 1, 2]  # Principal point y
-    print(intrinsic_matrix.shape)
-    # Determine the number of images, height, and width
-    n, img_height, img_width = dist_images.shape
-    
-    # Create arrays representing the x and y coordinates of each pixel
-    y_indices, x_indices = torch.meshgrid(torch.arange(img_height), torch.arange(img_width), indexing='ij')
-    y_indices, x_indices = y_indices.cuda(), x_indices.cuda()
-    print(x_indices.shape, c_x.shape)
-    x_indices = x_indices[None, :, :] - c_x[:, None, None]
-    y_indices = y_indices[None, :, :] - c_y[:, None, None]
-    
-    # Calculate the distance from each pixel to the principal point in the image plane
-    d = torch.sqrt(x_indices**2 + y_indices**2 + f_x[:, None, None]**2)
-    print("d", d.shape)
-    # d has shape (h, w), make it (1, h, w) to broadcast along batch size
-    #d = d[None, :, :]
-    
-    # Calculate Z-component using the cosine of the angle
-    depth_images = dist_images * (f_x[:, None, None] / d)
-    
-    return depth_images
-
 class OccupancyGrid:
     def __init__(self, grid_size, device='cpu'):
         """
@@ -329,7 +301,6 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     ui_window_class_type = QuadcopterEnvWindow
 
     # simulation
-    """
     sim: SimulationCfg = SimulationCfg(
         dt=1 / 100,
         disable_contact_processing=True,
@@ -341,21 +312,6 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
             dynamic_friction=1.0,
             restitution=0.0,
         ),
-    )
-    """
-    sim: SimulationCfg = SimulationCfg(
-        dt=1 / 100,
-        disable_contact_processing=True,
-        physx=sim_utils.PhysxCfg(use_gpu=False),
-        physics_material=sim_utils.RigidBodyMaterialCfg(
-            friction_combine_mode="multiply",
-            restitution_combine_mode="multiply",
-            static_friction=1.0,
-            dynamic_friction=1.0,
-            restitution=0.0,
-        ),
-        gravity=(0.0, 0.0, 0.0),
-        enable_scene_query_support=True
     )
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -389,12 +345,11 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 #     )
 #     camera 
     
-    
     tiled_camera:CameraCfg = CameraCfg(
         prim_path="/World/envs/env_.*/Robot/body/Camera",
         offset=CameraCfg.OffsetCfg(pos=(0.0, 0.0, 0.05), convention="world"),
         #offset=TiledCameraCfg.OffsetCfg(pos=(-7.0, 0.0, 3.0), rot=(0.9945, 0.0, 0.1045, 0.0), convention="world"),
-        data_types=["rgb", "distance_to_camera"], #["rgb", "distance_to_image_plane"],
+        data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
             #focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
@@ -404,9 +359,6 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         height=80,
       
     )
-
-
-
     '''
     
     tiled_camera: TiledCameraCfg = TiledCameraCfg(
@@ -428,9 +380,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     #from omni.isaac.lab.sim.schemas import activate_contact_sensors
     
     #activate_contact_sensors("/World/envs/env_.*/Robot")
-    #contact_forces = ContactSensorCfg(
-    #    prim_path="/World/envs/env_.*/Robot/.*", update_period=0.0, history_length=6, debug_vis=True
-    #)
+    contact_forces = ContactSensorCfg(
+        prim_path="/World/envs/env_.*/Robot/.*", update_period=0.0, history_length=6, debug_vis=True
+    )
     
     # scene
     #scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
@@ -573,7 +525,7 @@ class QuadcopterEnv(DirectRLEnv):
         mesh_prim_path = self.get_all_mesh_prim_path(scene_prim_root)
         print(mesh_prim_path)
         #max_len = 15
-        max_len = 0.5
+        max_len = 1.5
         scale_factor = self.get_scale(mesh_prim_path, max_len)
         print(scale_factor)
         print(f"Scaling factor: {scale_factor}")
@@ -606,12 +558,6 @@ class QuadcopterEnv(DirectRLEnv):
         print("bbbbbbbbbbbbbb")
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
-
-        #contact_forces = ContactSensorCfg(
-        #    prim_path="/World/envs/env_.*/Robot/body/body_collision/geometry", update_period=0.0, history_length=6, debug_vis=False
-        #)
-        #self._contact_sensor = ContactSensor(contact_forces)
-        #self.scene.sensors["contact_sensor"] = self._contact_sensor
         
         
         #Define the Crazyflie path and collision prim path
@@ -652,7 +598,7 @@ class QuadcopterEnv(DirectRLEnv):
                 # print(attr)
                 #print(f"Gravity disabled for {body_prim.GetPath()}")
                 #body_xform = UsdGeom.Xformable(body_prim)
-                body_scale_factor = Gf.Vec3f(0.5, 0.5, 10.0)
+                body_scale_factor = Gf.Vec3f(1.0, 1.0, 5.0)
                 #for op in body_xform.GetOrderedXformOps():
                 #    if op.GetOpType() == UsdGeom.XformOp.TypeScale:
                 #        body_scale_factor = op.Get()
@@ -678,22 +624,11 @@ class QuadcopterEnv(DirectRLEnv):
                 collision_xform.ClearXformOpOrder()
                 collision_xform.AddScaleOp().Set(final_scale_factor)
         
-        self.rescale_scene()
+        #self.rescale_scene()
         #self._tiled_camera = TiledCamera(self.cfg.tiled_camera)
         #self.contact_sensor = ContactSensor(self.cfg.contact_forces)
-        self._tiled_camera = Camera(self.cfg.tiled_camera)
+        #self._tiled_camera = Camera(self.cfg.tiled_camera)
     
-
-        #from omni.isaac.lab.sim.schemas import activate_contact_sensors
-        #activate_contact_sensors("/World/envs/env_.*/Robot")
-
-
-        contact_forces = ContactSensorCfg(
-            prim_path="/World/envs/env_.*/Robot/body", update_period=0.0, history_length=6, debug_vis=False
-        )
-        self._contact_sensor = ContactSensor(contact_forces)
-        self.scene.sensors["contact_sensor"] = self._contact_sensor
-
 
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -818,7 +753,6 @@ class QuadcopterEnv(DirectRLEnv):
         print(root_state[0, :7])
         print(env_ids)
         print(self._robot)
-        #root_state[:, :3] = torch.tensor([0, 0, 1])
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
         self._robot.write_data_to_sim()
@@ -929,7 +863,7 @@ class QuadcopterEnv(DirectRLEnv):
         #print(self.contact_sensor)
         print("Received shape of rgb   image: ", self._tiled_camera.data.output["rgb"].shape)
         #print("Received shape of depth image: ", self._tiled_camera.data.output["depth"].shape)
-        print("Received shape of depth image: ", self._tiled_camera.data.output["distance_to_camera"].shape)
+        print("Received shape of depth image: ", self._tiled_camera.data.output["distance_to_image_plane"].shape)
         #print(self._tiled_camera.data.intrinsic_matrices)
         print(self._tiled_camera.data.pos_w[0])
         
@@ -940,7 +874,6 @@ class QuadcopterEnv(DirectRLEnv):
         #self._tiled_camera.set_world_poses(self.current_position, self.current_orientation, convention="world")
         self._tiled_camera._update_buffers_impl(self.env_ids)
         print(self._index)
-        self._robot.update(0.001)
         
         #import matplotlib.pyplot as plt
         #plt.imshow(self._tiled_camera.data.output["depth"][0,:,:,0].cpu())
@@ -948,14 +881,7 @@ class QuadcopterEnv(DirectRLEnv):
         #import pdb; pdb.set_trace()
         #plt.imsave('camera_image/rgb_{}.png'.format(self._index),(self._tiled_camera.data.output["rgb"][0,:,:].cpu().numpy()).astype(np.uint8))
         #depth_image = self._tiled_camera.data.output["depth"].clone().clamp(-32,32)
-        depth_image = self._tiled_camera.data.output["distance_to_camera"].clone()
-
-        #print("aaa", depth_image.shape)
-        #dis_to_z(depth_image, depth_image.shape[2], depth_image.shape[1], fov):
-        depth_image = dis_to_z(depth_image, self._tiled_camera.data.intrinsic_matrices)
-        #print("aaa", depth_image.shape)
-        
-
+        depth_image = self._tiled_camera.data.output["distance_to_image_plane"].clone()
         #import pdb; pdb.set_trace()
         rgb_image = self._tiled_camera.data.output["rgb"].clone()
 
@@ -1074,9 +1000,8 @@ class QuadcopterEnv(DirectRLEnv):
         observations = {"policy": obs}
         stage = omni.usd.get_context().get_stage()
         collision_prim_path = "/World/envs/env_0/Robot/body/body_collision/geometry"
-        #overlap_demo = OverlapShapeDemo(stage, collision_prim_path)
-        #overlap_demo.check_collision()
-        print(torch.norm(self._contact_sensor.data.net_forces_w[0, 0, :])>0)
+        overlap_demo = OverlapShapeDemo(stage, collision_prim_path)
+        overlap_demo.check_collision()
         return observations
 
     def _get_rewards(self) -> torch.Tensor:

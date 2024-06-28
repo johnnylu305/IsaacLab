@@ -43,15 +43,19 @@ def main():
     env_cfg = parse_env_cfg(
         args_cli.task, use_gpu=not args_cli.cpu, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
     )
+    
     # create environment
     env = gym.make(args_cli.task, cfg=env_cfg)
-
+    
     # print info (this is vectorized environment)
     print(f"[INFO]: Gym observation space: {env.observation_space}")
     print(f"[INFO]: Gym action space: {env.action_space}")
+
+    
     # reset environment
     env.reset()
     # simulate environment
+    
     while simulation_app.is_running():
         # run everything in inference mode
         with torch.inference_mode():
@@ -59,10 +63,10 @@ def main():
             actions = 2 * torch.rand(env.action_space.shape, device=env.unwrapped.device) - 1
             # apply actions
             env.step(actions)
-
+    
     # close the simulator
     env.close()
-
+    
 
 if __name__ == "__main__":
     # run the main function

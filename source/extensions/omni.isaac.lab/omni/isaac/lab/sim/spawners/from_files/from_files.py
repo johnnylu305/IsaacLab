@@ -52,9 +52,9 @@ def spawn_from_multiple_usd(
         print(prim_paths)
         for prim_path in prim_paths:
             #sample the asset config to load
-            print(my_asset_list)
+            #print(my_asset_list)
             cfg = random.choice(my_asset_list)
-            print(cfg)
+            #print(cfg)
             # load the asset
             prim = _spawn_from_usd_file(prim_path, cfg.usd_path, cfg, translation, orientation)
         
