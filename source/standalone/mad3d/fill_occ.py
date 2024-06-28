@@ -14,6 +14,24 @@ parser.add_argument("input", type=str, help="The root to the input occupancy gri
 args_cli = parser.parse_args()
 
 
+def add_neighbors(occupied_voxels, grid_shape):
+    # Directions for 6-connected neighbors in a 3D grid
+    directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
+    x_dim, y_dim, z_dim = grid_shape
+    neighbors = set()
+
+    for x, y, z in occupied_voxels:
+        for dx, dy, dz in directions:
+            nx, ny, nz = x + dx, y + dy, z + dz
+            if 0 <= nx < x_dim and 0 <= ny < y_dim and 0 <= nz < z_dim:
+                neighbors.add((nx, ny, nz))
+    
+    # Combine original occupied voxels with their neighbors
+    occupied_voxels.update(neighbors)
+    
+    return occupied_voxels
+
+
 def find_occupied_voxels(grid):
     # Ensure grid is a numpy array
     grid = np.array(grid)
@@ -61,6 +79,8 @@ def fill_grid(path):
     assert hollow_occ[-1, -1, -1] == 0
     occ_set = find_occupied_voxels(hollow_occ)
     print(np.sum(hollow_occ), len(occ_set))
+    occ_set = add_neighbors(occ_set, hollow_occ.shape)
+    print(len(occ_set))
     output = os.path.join(os.path.split(path)[0], "fill_occ_set.pkl")
     # Save the occupied voxels to a file
     with open(output, 'wb') as file:
