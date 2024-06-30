@@ -35,7 +35,7 @@ def add_neighbors(occupied_voxels, grid_shape):
 def find_occupied_voxels(grid):
     # Ensure grid is a numpy array
     grid = np.array(grid)
-    x_dim, y_dim, z_dim = grid.shape
+    z_dim, x_dim, y_dim = grid.shape
     
     # Directions for 6-connected neighbors in a 3D grid
     directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
@@ -47,27 +47,27 @@ def find_occupied_voxels(grid):
         visited.add(start)
         
         while queue:
-            x, y, z = queue.popleft()
-            for dx, dy, dz in directions:
-                nx, ny, nz = x + dx, y + dy, z + dz
+            z, x, y = queue.popleft()
+            for dz, dx, dy in directions:
+                nz, nx, ny = z + dz, x + dx, y + dy
                 if 0 <= nx < x_dim and 0 <= ny < y_dim and 0 <= nz < z_dim:
-                    if grid[nx, ny, nz] == 0 and (nx, ny, nz) not in visited:
-                        visited.add((nx, ny, nz))
-                        queue.append((nx, ny, nz))
+                    if grid[nz, nx, ny] == 0 and (nz, nx, ny) not in visited:
+                        visited.add((nz, nx, ny))
+                        queue.append((nz, nx, ny))
         
         return visited
     
     # Start BFS from an exterior voxel
-    exterior_empty_voxels = bfs((x_dim-1, y_dim-1, z_dim-1))
+    exterior_empty_voxels = bfs((z_dim-1, x_dim-1, y_dim-1))
     
     occupied_voxels = set()
     
     # Collect all occupied voxels and mark all non-reachable empty voxels as occupied
-    for x in range(x_dim):
-        for y in range(y_dim):
-            for z in range(z_dim):
-                if grid[x, y, z] == 1 or (grid[x, y, z] == 0 and (x, y, z) not in exterior_empty_voxels):
-                    occupied_voxels.add((x, y, z))
+    for x in range(z_dim):
+        for y in range(x_dim):
+            for z in range(y_dim):
+                if grid[z, x, y] == 1 or (grid[z, x, y] == 0 and (z, x, y) not in exterior_empty_voxels):
+                    occupied_voxels.add((z, x, y))
     
     return occupied_voxels
 
@@ -79,8 +79,8 @@ def fill_grid(path):
     assert hollow_occ[-1, -1, -1] == 0
     occ_set = find_occupied_voxels(hollow_occ)
     print(np.sum(hollow_occ), len(occ_set))
-    occ_set = add_neighbors(occ_set, hollow_occ.shape)
-    print(len(occ_set))
+    #occ_set = add_neighbors(occ_set, hollow_occ.shape)
+    #print(len(occ_set))
     output = os.path.join(os.path.split(path)[0], "fill_occ_set.pkl")
     # Save the occupied voxels to a file
     with open(output, 'wb') as file:

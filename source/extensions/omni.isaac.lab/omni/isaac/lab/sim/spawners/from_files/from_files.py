@@ -50,15 +50,17 @@ def spawn_from_multiple_usd(
         prim_paths = [f"{source_prim_path}/{asset_path}" for source_prim_path in source_prim_paths]
         # spawn asset from the given usd file
         print(prim_paths)
+        asset_list = []
         for prim_path in prim_paths:
             #sample the asset config to load
             #print(my_asset_list)
             cfg = random.choice(my_asset_list)
+            asset_list.append(cfg.usd_path)
             #print(cfg)
             # load the asset
             prim = _spawn_from_usd_file(prim_path, cfg.usd_path, cfg, translation, orientation)
         
-        return prim
+        return prim, asset_list
 
 @clone
 def spawn_from_usd(

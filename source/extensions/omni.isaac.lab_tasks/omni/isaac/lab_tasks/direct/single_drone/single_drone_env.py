@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import torch
+import pickle
+
+
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import Articulation, ArticulationCfg
@@ -234,20 +237,20 @@ def dis_to_z(dist_images, intrinsic_matrix):
     f_y = intrinsic_matrix[:, 1, 1]  # Focal length in y
     c_x = intrinsic_matrix[:, 0, 2]  # Principal point x
     c_y = intrinsic_matrix[:, 1, 2]  # Principal point y
-    print(intrinsic_matrix.shape)
+    #print(intrinsic_matrix.shape)
     # Determine the number of images, height, and width
     n, img_height, img_width = dist_images.shape
     
     # Create arrays representing the x and y coordinates of each pixel
     y_indices, x_indices = torch.meshgrid(torch.arange(img_height), torch.arange(img_width), indexing='ij')
     y_indices, x_indices = y_indices.cuda(), x_indices.cuda()
-    print(x_indices.shape, c_x.shape)
+    #print(x_indices.shape, c_x.shape)
     x_indices = x_indices[None, :, :] - c_x[:, None, None]
     y_indices = y_indices[None, :, :] - c_y[:, None, None]
     
     # Calculate the distance from each pixel to the principal point in the image plane
     d = torch.sqrt(x_indices**2 + y_indices**2 + f_x[:, None, None]**2)
-    print("d", d.shape)
+    #print("d", d.shape)
     # d has shape (h, w), make it (1, h, w) to broadcast along batch size
     #d = d[None, :, :]
     
@@ -435,7 +438,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # scene
     #scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=2.5, replicate_physics=True)
 
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=2, env_spacing=5, replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=2, env_spacing=30, replicate_physics=True)
 
     
     thrust_to_weight = 1.9
@@ -568,14 +571,12 @@ class QuadcopterEnv(DirectRLEnv):
         print(f"Max Side: {max_side} meters")
         return desired_len/max_side
 
-    def rescale_scene(self, scene_prim_root="/World/envs/env_0/Scene"):
+    def rescale_scene(self, scene_prim_root="/World/envs/env_0/Scene", max_len=15):
 
         mesh_prim_path = self.get_all_mesh_prim_path(scene_prim_root)
-        print(mesh_prim_path)
-        #max_len = 15
-        max_len = 0.5
+        #print(mesh_prim_path)
         scale_factor = self.get_scale(mesh_prim_path, max_len)
-        print(scale_factor)
+        #print(scale_factor)
         print(f"Scaling factor: {scale_factor}")
 
         # Apply the scaling to the mesh
@@ -586,8 +587,43 @@ class QuadcopterEnv(DirectRLEnv):
             xform.ClearXformOpOrder()  # Clear any existing transformations
             xform.AddTransformOp().Set(scale_transform)
 
+
+    def get_robot_scale(self, robot_prim_root, desired_max_size):
+        crazyflie_prim = get_prim_at_path(prim_path=robot_prim_root)
+        # Calculate the bounding box (extents) of the robot
+        bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
+        bbox = bbox_cache.ComputeWorldBound(crazyflie_prim)
+        min_extent = bbox.GetRange().GetMin()
+        max_extent = bbox.GetRange().GetMax()
+
+        # Calculate the current dimensions
+        current_size_x = max_extent[0] - min_extent[0]
+        current_size_y = max_extent[1] - min_extent[1]
+        current_size_z = max_extent[2] - min_extent[2]
+
+        # Find the maximum dimension
+        current_max_size = max(current_size_x, current_size_y, current_size_z)
+        print(min_extent, max_extent)
+        print(f"Robot Current max size: {current_max_size} meters")
+
+        # Calculate the scaling factor
+        scale_factor = desired_max_size / current_max_size
+        print(f"Robot Scaling factor: {scale_factor}")
+        return scale_factor
+
+
+    def rescale_robot(self, robot_prim_root, scale_factor):
+        crazyflie_prim = get_prim_at_path(prim_path=robot_prim_root)
+        # Apply the scaling to the geometry itself, keeping the transformation matrix intact
+        for child in crazyflie_prim.GetChildren():
+            geom_xform = UsdGeom.Xformable(child)
+            geom_xform.ClearXformOpOrder()  # Clear any existing transformations
+            scale_op = geom_xform.AddScaleOp()
+            scale_op.Set(Gf.Vec3f(scale_factor, scale_factor, scale_factor))
+            print(f"Applied scaling factor to child: {child.GetPath()}")
+
     def _setup_scene(self):
-        
+        self.scene.clone_environments(copy_from_source=True)
         #scene_path = r'./Set_C_converted/BAT1_SETC_HOUSE1/BAT1_SETC_HOUSE1.usd'
         scenes_path = sorted(glob.glob(os.path.join(r'/home/dsr/Documents/Dataset/Raw_USD/BATCH_1/Set_A', '**', '*[!_non_metric].usd'), recursive=True))
         #scene_path= random.choice(scenes_path)
@@ -601,12 +637,25 @@ class QuadcopterEnv(DirectRLEnv):
         cfg_list = []
         for scene_path in scenes_path:
             cfg_list.append(UsdFileCfg(usd_path=scene_path))
-        print("aaaaaaaaaaaaaaaa")
-        spawn_from_multiple_usd(prim_path="/World/envs/env_.*/Scene", my_asset_list=cfg_list)
-        print("bbbbbbbbbbbbbb")
+        _, scene_lists = spawn_from_multiple_usd(prim_path="/World/envs/env_.*/Scene", my_asset_list=cfg_list)
+        #print(scene_lists)
+
+        # load occ set
+        occ_lists = []
+        self.occs = []
+        for scene in scene_lists:
+            path, file = os.path.split(scene.replace("Raw_USD", "Occ"))
+            #print(path)
+            occ_path = os.path.join(path, "fill_occ_set.pkl")
+            occ_lists.append(occ_path)
+            #print(occ_path)
+            # To load the occupied voxels from the file
+            with open(occ_path, 'rb') as file:
+                self.occs.append(pickle.load(file))
+    
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
-
+        
         #contact_forces = ContactSensorCfg(
         #    prim_path="/World/envs/env_.*/Robot/body/body_collision/geometry", update_period=0.0, history_length=6, debug_vis=False
         #)
@@ -616,69 +665,8 @@ class QuadcopterEnv(DirectRLEnv):
         
         #Define the Crazyflie path and collision prim path
         
-        collision_prim_path = "/World/envs/env_0/Robot/body/body_collision/geometry"
-        #collision node need to remove from body node to parent
-        crazyflie_path = "/World/envs/env_0/Robot"
-        
-        stage = omni.usd.get_context().get_stage()
-        # Ensure the robot and collision geometry exist
-        if not stage.GetPrimAtPath(crazyflie_path).IsValid():
-            print(f"Robot at path {crazyflie_path} does not exist.")
-        else:
-            # Access the Crazyflie robot and collision geometry
-            crazyflie_prim = stage.GetPrimAtPath(crazyflie_path)
-            collision_prim = stage.GetPrimAtPath(collision_prim_path)
-        
-            # Ensure the geometry is a UsdGeom.Xformable
-            if not crazyflie_prim.IsA(UsdGeom.Xformable) or not collision_prim.IsA(UsdGeom.Xformable):
-                print("The geometry type is not supported. Please check the robot type.")
-            else:
-                # Retrieve the scale factor for /World/Crazyflie/body
-                #body_prim_path = "/World/envs/env_0/Scene/Robot/body"
-                #body_prim_path = "/World/Crazyflie"
-                #body_prim = stage.GetPrimAtPath(body_prim_path)
-                # disable gravity to avoid falling
-                # Access the RigidBodyAPI
-                # apply rigid body API and schema
-                # physicsAPI = UsdPhysics.RigidBodyAPI.Apply(body_prim)
-        
-                #/World/Crazyflie/body.physxRigidBody:disableGravity
-                
-                #disable_gravity_attr = body_prim.GetAttribute("physxRigidBody:disableGravity")     
-                #body_prim.physxRigidBody:disableGravity=True
-                #import pdb; pdb.set_trace()   
-                #disable_gravity_attr.Set(True)
-        
-                # print(attr)
-                #print(f"Gravity disabled for {body_prim.GetPath()}")
-                #body_xform = UsdGeom.Xformable(body_prim)
-                body_scale_factor = Gf.Vec3f(0.5, 0.5, 10.0)
-                #for op in body_xform.GetOrderedXformOps():
-                #    if op.GetOpType() == UsdGeom.XformOp.TypeScale:
-                #        body_scale_factor = op.Get()
-                #        break
-        
-                # Retrieve the scale factor for /World/Crazyflie/body/body_collision/geometry
-                collision_xform = UsdGeom.Xformable(collision_prim)
-        
-                # Define the desired size in world space
-                #desired_size = 5.0  # meters
-                #desired_size = 3.0  # meters
-                desired_size = 0.5  # meters
-        
-                # Calculate the scale to be applied to the collision box to make it 3x3x3 meters in world space
-                final_scale_factor = Gf.Vec3f(
-                    desired_size / body_scale_factor[0],
-                    desired_size / body_scale_factor[1],
-                    desired_size / body_scale_factor[2]
-                )
-                print(f"Final scale factor to be applied: {final_scale_factor}")
-        
-                # Apply the final scale factor to the collision geometry
-                collision_xform.ClearXformOpOrder()
-                collision_xform.AddScaleOp().Set(final_scale_factor)
-        
-        self.rescale_scene()
+
+        #self.rescale_scene()
         #self._tiled_camera = TiledCamera(self.cfg.tiled_camera)
         #self.contact_sensor = ContactSensor(self.cfg.contact_forces)
         self._tiled_camera = Camera(self.cfg.tiled_camera)
@@ -699,7 +687,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         # clone, filter, and replicate
-        self.scene.clone_environments(copy_from_source=False)
+        #self.scene.clone_environments(copy_from_source=False)#False)
         self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
@@ -707,6 +695,14 @@ class QuadcopterEnv(DirectRLEnv):
         grid_size = (64, 64, 64)
         self.grid = OccupancyGrid(grid_size, device=self.device)
         
+
+        robot_scale = self.get_robot_scale("/World/envs/env_0/Robot", 2)
+        for i in range(self.num_envs):
+            self.rescale_scene(f"/World/envs/env_{i}/Scene")
+            self.rescale_robot(f"/World/envs/env_{i}/Robot", robot_scale)
+    
+        #self.rescale_scene(f"/World/envs/env_0/Scene")
+        #self.rescale_scene(f"/World/envs/env_2/Scene")
         #spawn_camera(prim_path="/World/envs/env_.*/Robot/body/camera", cfg=PinholeCameraCfg(data_types=["rgb", "distance_to_image_plane"]))
 
     def _pre_physics_step(self, actions: torch.Tensor):
@@ -756,9 +752,9 @@ class QuadcopterEnv(DirectRLEnv):
         #init_root_pos_w-=0.1
         #self.robot_view.set_world_poses(init_root_pos_w, init_root_quat_w)
         #self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
-        radius = 0.5        # Radius of the cylinder
+        radius = 15 #0.5        # Radius of the cylinder
         
-        height = 0.2       # Height of the cylinder
+        height = 10 #0.2       # Height of the cylinder
         num_points = 100  # Number of points in the trajectory
 
         # Angular coordinates
@@ -775,7 +771,13 @@ class QuadcopterEnv(DirectRLEnv):
 
         # Z coordinates (extending along the height of the cylinder)
         z = np.linspace(0, height, num_points)
-        
+       
+
+        # line trajectory
+        x = np.ones(num_points) * 0
+        y = np.linspace(-15, 15, num_points)
+        z = np.ones(num_points) * 2
+
         #print("aaa", self._index)
         #self._index+=1
         #print("bbb", self._index)
@@ -815,9 +817,9 @@ class QuadcopterEnv(DirectRLEnv):
         root_state[:, :3] += self._terrain.env_origins[env_ids]
         self.current_position=root_state[:,:3]
         self.current_orientation=root_state[:,3:7]
-        print(root_state[0, :7])
+        #print(root_state[0, :7])
         print(env_ids)
-        print(self._robot)
+        #print(self._robot)
         #root_state[:, :3] = torch.tensor([0, 0, 1])
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
@@ -825,12 +827,47 @@ class QuadcopterEnv(DirectRLEnv):
         #self._robot.write_joint_state_to_sim(root_state[:, :7], root_state[:, 7:], None, env_ids)
         #print(self._index)
         
+
+        # Settings for the occupancy grid
+        env_size_x, env_size_y, env_size_z = 15*2, 15*2, 15*2
+        grid_size_x, grid_size_y, grid_size_z = 20, 20, 20
+        org_x, org_y = env_size_x/2., env_size_y/2.
+        org_z = 0
+        cell_size = min(env_size_x/grid_size_x, env_size_y/grid_size_y)  # meters per cell
+        slice_height = env_size_z / grid_size_z  # height of each slice in meters
+        for i in range(self.num_envs):
+            self.check_building_collision(root_state[i, :3], i, org_x, org_y, org_z, cell_size, slice_height)
         #self.robot_view.set_world_poses(root_state[:, :3], root_state[:, 3:7])
         #print(default_root_state)
         #import pdb; pdb.set_trace()
         #joint_pos = self._robot.data.default_joint_pos[env_ids]
         #joint_vel = self._robot.data.default_joint_vel[env_ids]
         #self._robot.write_joint_state_to_sim(root_state[:, 3:7], joint_vel, None, env_ids)
+
+
+    def check_building_collision(self, xyz, env_ids, org_x, org_y, org_z, cell_size, slice_height):
+        # remove offset
+        xyz -= self._terrain.env_origins[env_ids]
+        
+        x, y, z = xyz.detach().cpu().numpy()
+
+        x_, y_, z_ = x, y, z
+
+        # smallest point to (0, 0, 0)
+        x += org_x
+        y += org_y
+        z += org_z
+
+        # to voxel id
+        x = np.floor(x/cell_size).astype(np.int32)
+        y = np.floor(y/cell_size).astype(np.int32)
+        z = np.floor(z/slice_height).astype(np.int32)
+
+        col = (z, x, y) in self.occs[env_ids]
+        #print(sorted(list(self.occs[env_ids])))
+        print(f"Env: {env_ids} Map zxy: {z_} {x_} {y_} to voxel_zxy: {z} {x} {y}, Col: {col}")
+        return col
+
 
     def pointcloud_from_and_depth(self, depth:torch.Tensor, intrinsic_matrix:torch.Tensor, camera_matrix:torch.Tensor=None):
         #print(depth.shape)

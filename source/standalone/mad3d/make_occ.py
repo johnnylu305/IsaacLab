@@ -228,6 +228,7 @@ def generate_occupancy_maps(world, output):
 
     print(f"cell size: {cell_size}, cell height: {slice_height}")
 
+    # this is z x y
     occ_maps = []
 
     # Iterate over each slice
