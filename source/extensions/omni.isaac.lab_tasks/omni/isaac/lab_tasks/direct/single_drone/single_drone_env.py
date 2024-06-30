@@ -656,6 +656,55 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         
+        # add walls
+        boundary = 30
+        cfg_cube_rigid = sim_utils.CuboidCfg(
+            size=([boundary, 0.1, boundary]),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            #mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+            #collision_props=sim_utils.CollisionPropertiesCfg(),
+            #visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+        )
+        cfg_cube_rigid.func(
+            "/World/envs/env_.*/Wall1", cfg_cube_rigid, translation=(0, -boundary/2.0, boundary/2.0), orientation=(1.0, 0.0, 0.0, 0.0)
+        )
+
+        boundary = 30
+        cfg_cube_rigid = sim_utils.CuboidCfg(
+            size=([boundary, 0.1, boundary]),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            #mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+            #collision_props=sim_utils.CollisionPropertiesCfg(),
+            #visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+        )
+        cfg_cube_rigid.func(
+            "/World/envs/env_.*/Wall2", cfg_cube_rigid, translation=(0, boundary/2.0, boundary/2.0), orientation=(1.0, 0.0, 0.0, 0.0)
+        )
+
+        boundary = 30
+        cfg_cube_rigid = sim_utils.CuboidCfg(
+            size=([0.1, boundary, boundary]),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            #mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+            #collision_props=sim_utils.CollisionPropertiesCfg(),
+            #visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+        )
+        cfg_cube_rigid.func(
+            "/World/envs/env_.*/Wall3", cfg_cube_rigid, translation=(boundary/2.0, 0, boundary/2.0), orientation=(1.0, 0.0, 0.0, 0.0)
+        )
+
+        boundary = 30
+        cfg_cube_rigid = sim_utils.CuboidCfg(
+            size=([0.1, boundary, boundary]),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            #mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+            #collision_props=sim_utils.CollisionPropertiesCfg(),
+            #visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0)),
+        )
+        cfg_cube_rigid.func(
+            "/World/envs/env_.*/Wall4", cfg_cube_rigid, translation=(-boundary/2.0, 0, boundary/2.0), orientation=(1.0, 0.0, 0.0, 0.0)
+        )
+
         #contact_forces = ContactSensorCfg(
         #    prim_path="/World/envs/env_.*/Robot/body/body_collision/geometry", update_period=0.0, history_length=6, debug_vis=False
         #)
