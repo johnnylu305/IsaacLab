@@ -801,7 +801,7 @@ class QuadcopterEnv(DirectRLEnv):
         #init_root_pos_w-=0.1
         #self.robot_view.set_world_poses(init_root_pos_w, init_root_quat_w)
         #self._robot.set_external_force_and_torque(self._thrust, self._moment, body_ids=self._body_id)
-        radius = 15 #0.5        # Radius of the cylinder
+        radius = 13 #0.5        # Radius of the cylinder
         
         height = 10 #0.2       # Height of the cylinder
         num_points = 100  # Number of points in the trajectory
@@ -823,9 +823,9 @@ class QuadcopterEnv(DirectRLEnv):
        
 
         # line trajectory
-        x = np.ones(num_points) * 0
-        y = np.linspace(-15, 15, num_points)
-        z = np.ones(num_points) * 2
+        #x = np.ones(num_points) * 0
+        #y = np.linspace(-15, 15, num_points)
+        #z = np.ones(num_points) * 2
 
         #print("aaa", self._index)
         #self._index+=1
