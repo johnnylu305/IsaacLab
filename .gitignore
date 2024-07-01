@@ -1,4 +1,11 @@
-# C++
+Occ_saved/*
+Set_C_converted/*
+
+
+*.png
+*.pyc
+
+## C++
 **/cmake-build*/
 **/build*/
 **/*.so

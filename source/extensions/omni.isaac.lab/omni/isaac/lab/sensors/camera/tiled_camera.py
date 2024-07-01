@@ -21,6 +21,7 @@ from omni.isaac.lab.utils.warp.kernels import reshape_tiled_image
 
 from ..sensor_base import SensorBase
 from .camera import Camera
+from .utils import convert_orientation_convention
 
 if TYPE_CHECKING:
     from .camera_cfg import TiledCameraCfg
@@ -88,6 +89,7 @@ class TiledCamera(Camera):
         SensorBase.reset(self, env_ids)
         if env_ids is None:
             env_ids = self._ALL_INDICES
+        #self._update_poses(self._ALL_INDICES)
         # Reset the frame count
         self._frame[env_ids] = 0
 
@@ -164,9 +166,30 @@ class TiledCamera(Camera):
     def _process_annotator_output(self, name: str, output: Any) -> tuple[torch.tensor, dict | None]:
         raise RuntimeError("Annotator data is not available for the tiled camera sensor.")
 
+    def _update_poses(self, env_ids: Sequence[int]):
+        """Computes the pose of the camera in the world frame with ROS convention.
+
+        This methods uses the ROS convention to resolve the input pose. In this convention,
+        we assume that the camera front-axis is +Z-axis and up-axis is -Y-axis.
+
+        Returns:
+            A tuple of the position (in meters) and quaternion (w, x, y, z).
+        """
+        # check camera prim exists
+        if len(self._sensor_prims) == 0:
+            raise RuntimeError("Camera prim is None. Please call 'sim.play()' first.")
+
+        # get the poses from the view
+        poses, quat = self._view.get_world_poses(env_ids)
+        self._data.pos_w[env_ids] = poses
+        self._data.quat_w_world[env_ids] = convert_orientation_convention(quat, origin="opengl", target="world")
+
+
     def _update_buffers_impl(self, env_ids: Sequence[int]):
         # Increment frame count
         self._frame[env_ids] += 1
+        # -- pose
+        #self._update_poses(self._ALL_INDICES)
         # Extract the flattened image buffer
         tiled_data_buffer = self._annotator.get_data()
         if isinstance(tiled_data_buffer, np.ndarray):

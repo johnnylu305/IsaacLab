@@ -45,7 +45,7 @@ class CartpoleRGBCameraEnvCfg(DirectRLEnvCfg):
         width=80,
         height=80,
     )
-    write_image_to_file = False
+    write_image_to_file = True
 
     # change viewer settings
     viewer = ViewerCfg(eye=(20.0, 20.0, 20.0))
