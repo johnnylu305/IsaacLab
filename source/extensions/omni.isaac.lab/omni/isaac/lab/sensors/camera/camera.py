@@ -480,6 +480,9 @@ class Camera(SensorBase):
                 for index in env_ids:
                     # get the output
                     output = annotators[index].get_data()
+                    print("A", output)
+                    output = annotators[index].get_data()
+                    print("B", output)
                     # process the output
                     data, info = self._process_annotator_output(name, output)
                     print("buffer impl", data)

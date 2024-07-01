@@ -307,10 +307,10 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
-        dt=1 / 1000,
+        dt=1 / 120,
         #dt=1 / 1000,
         disable_contact_processing=True,
-        physx=sim_utils.PhysxCfg(use_gpu=False),
+        physx=sim_utils.PhysxCfg(use_gpu=True),
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",
@@ -361,8 +361,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
             #focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
             focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 1.0e5)
         ),
-        width=800,
-        height=800,
+        width=400,
+        height=400,
       debug_vis=True,
     )
     '''
@@ -400,9 +400,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     moment_scale = 0.01
 
     # env
-    episode_length_s = 10.0
+    episode_length_s = 10.0 #10.0
     #episode_length_s = 1.0
-    decimation = 2
+    decimation = 1 #2
     #decimation = 1
     num_actions = 4
     num_observations = 12
@@ -660,8 +660,8 @@ class QuadcopterEnv(DirectRLEnv):
 
     def _pre_physics_step(self, actions: torch.Tensor):
         #self._tiled_camera._update_buffers_impl(self.env_ids)
-        num_points = 7
-        if self._index >= 2: #>= num_points:
+        num_points = 3
+        if self._index >= num_points:
             self._index = -1  # Reset index to loop the trajectory
             #import pdb; pdb.set_trace()
         #self._index+=1
@@ -672,6 +672,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._yaw=self._actions[:,-1]
         self._thrust[:, 0, 2] = self.cfg.thrust_to_weight * self._robot_weight * (self._actions[:, 0] + 1.0) / 2.0
         self._moment[:, 0, :] = self.cfg.moment_scale * self._actions[:, 1:]
+
+
 
     def normalize_vector(self,v):
         norm = np.linalg.norm(v)
@@ -716,24 +718,32 @@ class QuadcopterEnv(DirectRLEnv):
         #radius = 0.6        # Radius of the cylinder
         height = 0.5       # Height of the cylinder
         #height = 0.2       # Height of the cylinder
-        num_points = 8  # Number of points in the trajectory
+        num_points = 4  # Number of points in the trajectory
 
         # Angular coordinates
-        #theta = [0, np.pi/2., np.pi, np.pi*3/2]#np.linspace(0, 2 * np.pi, num_points)
-        theta = np.linspace(0, 2 * np.pi, num_points)
+        theta = [0, np.pi/2., np.pi, np.pi*3/2]#np.linspace(0, 2 * np.pi, num_points)
+        #theta = np.linspace(0, 2 * np.pi, num_points)
         print(theta)
         radius+=0.005*self._index
         # X and Y coordinates
         x = radius * np.cos(theta)
         y = radius * np.sin(theta)
 
+        #x[::-2] = x[::-1]
 
+        #y[::-2] = y[::-1]
         #x = np.linspace(0, height, num_points)
         #y = np.linspace(0, height, num_points)
 
         # Z coordinates (extending along the height of the cylinder)
-        z = np.linspace(0.2, height, num_points)
+        z = np.ones(num_points) * 0.25 #np.linspace(0.2, height, num_points)
         
+        #x = np.ones(num_points) * 0
+        #y = np.array([-1, -1, -0.75, -0.75, 0.5, 0.5, 1.0, 1.0]) #np.linspace(-1, 1, num_points)
+        #z = np.ones(num_points) * 0.25
+
+
+
         #if self._index==0 or self._index==5 or self._index==10:
         #import pdb; pdb.set_trace()
         
@@ -758,7 +768,7 @@ class QuadcopterEnv(DirectRLEnv):
         #default_root_state = self._robot.data.default_root_state[env_ids]
         #print(self.default_root_state.shape)
         #import pdb; pdb.set_trace()
-        root_state = torch.zeros((self.num_envs,13)).cuda()
+        root_state = torch.ones((self.num_envs,13)).cuda() * 0.01
         #self.default_root_state[:,:3]=current_position.unsqueeze(0)
         #self.default_root_state[:,3:7]=orientation.unsqueeze(0)
         root_state[:,:3]=current_position.unsqueeze(0)
@@ -776,8 +786,26 @@ class QuadcopterEnv(DirectRLEnv):
         #print(env_ids)
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
-        #self._robot.write_data_to_sim()
-        
+        """
+        self._tiled_camera.data.pos_w[0] = root_state[0, :3]
+        self.scene.articulations["robot"].write_root_pose_to_sim(root_state[:, :7], env_ids)
+        self._robot.write_data_to_sim()
+        self.scene.write_data_to_sim()
+        self.scene.update(dt=0)
+        self._robot.write_data_to_sim()
+        self.scene.write_data_to_sim()
+        self.scene.update(dt=0)
+        self._tiled_camera.data.pos_w[0] = root_state[0, :3]
+        """
+        print("A update @@@@", self._tiled_camera.data.pos_w[0], root_state[:, :7])
+        self.scene.update(dt=0)
+        self.sim.step()
+        self.scene.update(dt=0)
+        self.sim.step()
+        self.scene.update(dt=0)
+        self.sim.step()
+        print("B update @@@@", self._tiled_camera.data.pos_w[0], root_state[:, :7])
+
         #self._robot.write_joint_state_to_sim(root_state[:, :7], root_state[:, 7:], None, env_ids)
         #print(self._index)
         
@@ -877,13 +905,12 @@ class QuadcopterEnv(DirectRLEnv):
                             xform.AddTranslateOp().Set(cube_pos)
 
     def _get_observations(self) -> dict:
-        
-
+    
         #data_type = "rgb" if "rgb" in self.cfg.tiled_camera.data_types else "depth"
         #observations = {"policy": self._tiled_camera.data.output[data_type].clone()}
         # print information from the sensors
         
-        
+    
         print("-------------------------------")
         #print(self.contact_sensor)
         print("Received shape of rgb   image: ", self._tiled_camera.data.output["rgb"].shape)
@@ -899,7 +926,6 @@ class QuadcopterEnv(DirectRLEnv):
         #self._tiled_camera.set_world_poses(self.current_position, self.current_orientation, convention="world")
         #self._tiled_camera._update_buffers_impl(self.env_ids)
         print("Obv", self._index)
-        
         #import matplotlib.pyplot as plt
         #plt.imshow(self._tiled_camera.data.output["depth"][0,:,:,0].cpu())
         plt.imsave('camera_image/depth_{}.png'.format(self._index),np.clip(self._tiled_camera.data.output["distance_to_image_plane"][0,:,:].clone().cpu().numpy(),0,20).astype(np.uint8), cmap='gray')
@@ -926,10 +952,15 @@ class QuadcopterEnv(DirectRLEnv):
         #import pdb; pdb.set_trace()
         rgb_image = self._tiled_camera.data.output["rgb"].clone()
         #self._tiled_camera._update_buffers_impl(self.env_ids)
-        points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
-        points_3d_world = transform_points(points_3d_cam, self.camera_pos, self.camera_quat)
+        #points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
+        print("obv1", self.camera_pos)
+        #points_3d_world = transform_points(points_3d_cam, self.camera_pos, self.camera_quat)
         self.camera_pos = self._tiled_camera.data.pos_w.clone()
         self.camera_quat = self._tiled_camera.data.quat_w_ros.clone()
+        depth_image = self._tiled_camera.data.output["distance_to_image_plane"].clone()
+        points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
+        points_3d_world = transform_points(points_3d_cam, self.camera_pos, self.camera_quat)
+        print("obv2", self.camera_pos)
         #self._tiled_camera._update_buffers_impl(self.env_ids)
         #self._tiled_camera._update_buffers_impl(self.env_ids)
         #current_orientation_ros = convert_orientation_convention(self.current_orientation, origin="world", target="ros")
@@ -946,8 +977,8 @@ class QuadcopterEnv(DirectRLEnv):
         #     )
         
         
-        if points_3d_world.size()[0] > 0:
-           pc_markers.visualize(translations=points_3d_world[0])
+        #if points_3d_world.size()[0] > 0:
+        #   pc_markers.visualize(translations=points_3d_world[0])
                 
         #print(points_3d_world)
         # # Add pointcloud to scene
@@ -1072,7 +1103,7 @@ class QuadcopterEnv(DirectRLEnv):
             for j in range(self.probability_grid.shape[0]):
                 for i in range(grid_size_z): 
                     #import pdb; pdb.set_trace()               
-                    #self.create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), self.probability_grid[j,:,:,i], cell_size, i*slice_height, i)
+                    self.create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), self.probability_grid[j,:,:,i], cell_size, i*slice_height, i)
                     image_filename = f"occupancy_map_slice_{i}.png"
                     save_occupancy_grid_as_image(self.probability_grid[j,:,:,i], os.path.join(output, image_filename))
                 #import pdb; pdb.set_trace()
@@ -1122,11 +1153,17 @@ class QuadcopterEnv(DirectRLEnv):
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
-        #died = torch.logical_or(self._robot.data.root_pos_w[:, 2] < 0.1, self._robot.data.root_pos_w[:, 2] > 2.0)
+        #died = torch.logical_or(self._robot.data.root_pos_w[:, 2] < 0.5, self._robot.data.root_pos_w[:, 2] > 2.0)
         died = torch.logical_or(self._robot.data.root_pos_w[:, 2] < 0, self._robot.data.root_pos_w[:, 2] > 5.0)
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
+        print("wwwwwwwwwwwwwwwwwwwwwwwwwwwwww")
+        print("wwwwwwwwwwwwwwwwwwwwwwwwwwwwww")
+        print("wwwwwwwwwwwwwwwwwwwwwwwwwwwwww")
+        #self.sim.step()
+        #self.sim.step()
+        #self.sim.step()
         if env_ids is None or len(env_ids) == self.num_envs:
             env_ids = self._robot._ALL_INDICES
         self.env_ids = env_ids
@@ -1167,7 +1204,7 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-        scenes_path = sorted(glob.glob(os.path.join(r'/mnt/zhuzhuan/Documents/MAD3D/IsaacLab/Set_C_converted', '**', '*[!_non_metric].usd'), recursive=True))
+        scenes_path = sorted(glob.glob(os.path.join(r'/home/dsr/Documents/Dataset/Raw_USD/BATCH_1/Set_A', '**', '*[!_non_metric].usd'), recursive=True))
         #print(scene_path)
         #scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*[!_non_metric].usd'), recursive=True))
         #import re
@@ -1190,6 +1227,9 @@ class QuadcopterEnv(DirectRLEnv):
         #xself._tiled_camera.reset()
         #import pdb; pdb.set_trace()
 
+        #self.sim.step()
+        #self.sim.step()
+        #self.sim.step()
     # def _set_debug_vis_impl(self, debug_vis: bool):
     #     # create markers if necessary for the first tome
     #     if debug_vis:
