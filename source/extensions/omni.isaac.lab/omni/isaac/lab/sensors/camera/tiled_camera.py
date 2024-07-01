@@ -21,6 +21,7 @@ from omni.isaac.lab.utils.warp.kernels import reshape_tiled_image
 
 from ..sensor_base import SensorBase
 from .camera import Camera
+from .utils import convert_orientation_convention
 
 if TYPE_CHECKING:
     from .camera_cfg import TiledCameraCfg
