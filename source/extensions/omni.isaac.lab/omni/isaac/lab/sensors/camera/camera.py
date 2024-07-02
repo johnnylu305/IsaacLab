@@ -463,8 +463,6 @@ class Camera(SensorBase):
     def _update_buffers_impl(self, env_ids: Sequence[int]):
         # Increment frame count
         self._frame[env_ids] += 1
-        #self._frame[env_ids] = 0
-        #print("update buffer", self._frame[0])
         # -- pose
         self._update_poses(env_ids)
         # -- read the data from annotator registry
@@ -480,12 +478,8 @@ class Camera(SensorBase):
                 for index in env_ids:
                     # get the output
                     output = annotators[index].get_data()
-                    print("A", output)
-                    output = annotators[index].get_data()
-                    print("B", output)
                     # process the output
                     data, info = self._process_annotator_output(name, output)
-                    print("buffer impl", data)
                     # add data to output
                     self._data.output[name][index] = data
                     # add info to output
@@ -575,7 +569,6 @@ class Camera(SensorBase):
 
         # get the poses from the view
         poses, quat = self._view.get_world_poses(env_ids)
-        print("buffer poses", poses)
         self._data.pos_w[env_ids] = poses
         self._data.quat_w_world[env_ids] = convert_orientation_convention(quat, origin="opengl", target="world")
 
@@ -597,7 +590,6 @@ class Camera(SensorBase):
                 output = annotators[index].get_data()
                 # process the output
                 data, info = self._process_annotator_output(name, output)
-                print("buffer", data)
                 # append the data
                 data_all_cameras.append(data)
                 # store the info
