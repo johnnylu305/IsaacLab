@@ -28,7 +28,8 @@ from omni.isaac.lab_assets import CRAZYFLIE_CFG  # isort: skip
 from omni.isaac.lab.markers import CUBOID_MARKER_CFG  # isort: skip
 from omni.isaac.core import World
 from omni.isaac.core.utils.stage import add_reference_to_stage
-from omni.isaac.core.utils.prims import get_prim_at_path
+from omni.isaac.core.utils.prims import get_prim_at_path, delete_prim
+
 from omni.isaac.core.prims import XFormPrim
 from omni.isaac.lab.sim.spawners.from_files import UsdFileCfg, spawn_from_usd, spawn_from_multiple_usd, spawn_from_multiple_usd_env_id
 from omni.isaac.lab.sim.spawners.sensors import spawn_camera, PinholeCameraCfg
@@ -126,6 +127,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._index += 1
         # TODO clamp each action
         self._actions = actions.clone().clamp(-1.0, 1.0)
+        self._xyz=self._actions[:, :3]*15
+        self._yaw=self._actions[:,3]
 
     def _apply_action(self):
         if self.cfg.preplan:
@@ -142,6 +145,8 @@ class QuadcopterEnv(DirectRLEnv):
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
         root_state[:, :3] += self._terrain.env_origins[env_ids]
+        
+        #root_state[:,:3]=self._xyz + self._terrain.env_origins
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
 
@@ -243,7 +248,8 @@ class QuadcopterEnv(DirectRLEnv):
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length-1
         # TODO setup died when collision happens
-        died = False #self._index > 2
+        died = False #
+        died = self._index > 2
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -269,10 +275,22 @@ class QuadcopterEnv(DirectRLEnv):
 
         # TODO load all usd path
         # setup building
-        scenes_path = sorted(glob.glob(os.path.join(r'/home/dsr/Documents/Dataset/Raw_USD/BATCH_1/Set_A', '**', '*[!_non_metric].usd'), recursive=True))  
-        stage = omni.usd.get_context().get_stage()
-        #for env_id in env_ids:
-        #    stage.RemovePrim(f'/World/envs/env_{env_id}/Scene')
+        scenes_path = []
+        # Loop over each batch number
+        for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
+            # Generate the path pattern for the glob function
+            path_pattern = os.path.join(f'/home/dsr/Documents/Dataset/Raw_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+
+            # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
+            scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
+        for env_id in env_ids:
+            delete_prim(f'/World/envs/env_{env_id}/Scene')
+
+        # reset occupancy grid
+        grid_size = (self.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size)
+        self.grid =OccupancyGrid(self.cfg.env_size, grid_size, self.cfg.decrement, self.cfg.increment, 
+                                  self.cfg.max_log_odds, self.cfg.min_log_odds, self.device)
+                                  
         cfg_list = []
         for scene_path in scenes_path:
             cfg_list.append(UsdFileCfg(usd_path=scene_path))
