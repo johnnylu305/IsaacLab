@@ -9,8 +9,14 @@ parser.add_argument("output", type=str, help="The root to store the occupancy gr
 parser.add_argument(
     "--max_len",
     type=float,
-    default=15,
+    default=8,
     help="Normalize the longest side to max length.",
+)
+parser.add_argument(
+    "--env_size",
+    type=float,
+    default=20,
+    help="Env size",
 )
 parser.add_argument(
     "--floor_len",
@@ -212,7 +218,7 @@ def generate_occupancy_maps(world, output):
     generator = _occupancy_map.Generator(physx, stage_id)
 
     # Settings for the occupancy grid
-    env_size_x, env_size_y, env_size_z = args_cli.max_len*2, args_cli.max_len*2, args_cli.max_len*2
+    env_size_x, env_size_y, env_size_z = args_cli.env_size, args_cli.env_size, args_cli.env_size
     grid_size_x, grid_size_y, grid_size_z = args_cli.grid_size, args_cli.grid_size, args_cli.grid_size
     org_x, org_y = env_size_x/2., env_size_y/2.
     cell_size = min(env_size_x/grid_size_x, env_size_y/grid_size_y)  # meters per cell

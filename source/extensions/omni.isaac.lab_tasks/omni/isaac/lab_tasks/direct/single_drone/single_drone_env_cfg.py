@@ -62,7 +62,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 30 # in meter, 2 cells is one unit
 
-    decimation = 1 # _apply_action will run decimation time
+    decimation = 10 # _apply_action will run decimation time
     num_actions = 5 # x, y, z, yaw, pitch
     num_observations = 3 # rgb image, occ grid, drone pose
     num_states = 0
@@ -124,9 +124,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         update_period=0, # update every physical step
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=1.38, # in cm
-            focus_distance=1.0, # in m 
-            horizontal_aperture=24., # in mm 
+            #focal_length=1.38, # in cm
+            #focus_distance=1.0, # in m 
+            #horizontal_aperture=24., # in mm 
             clipping_range=(0.1, 20.0) # near and far plane in meter
         ),
         width=camera_w,

@@ -145,10 +145,11 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
 
+        # do not need this if decimation is large enough?
         # temporary solution for unsync bug between camera position and image
-        for i in range(3):
-            self.scene.update(dt=0)
-            self.sim.step()
+        #for i in range(3):
+        #    self.sim.step()
+        #    self.scene.update(dt=0)
 
         # TODO do this after loading occupancy grid
         # Settings for the occupancy grid
@@ -269,7 +270,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         # TODO load all usd path
         # setup building
-        scenes_path = sorted(glob.glob(os.path.join(r'/home/dsr/Documents/Dataset/Raw_USD/BATCH_1/Set_A', '**', '*[!_non_metric].usd'), recursive=True))  
+        scenes_path = sorted(glob.glob(os.path.join(r'/home/dsr/Documents/Dataset/Raw_Rescale_USD/BATCH_1/Set_A', '**', '*[!_non_metric].usd'), recursive=True))  
         stage = omni.usd.get_context().get_stage()
         #for env_id in env_ids:
         #    stage.RemovePrim(f'/World/envs/env_{env_id}/Scene')
@@ -278,7 +279,7 @@ class QuadcopterEnv(DirectRLEnv):
             cfg_list.append(UsdFileCfg(usd_path=scene_path))
         spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", env_ids=env_ids, my_asset_list=cfg_list)
         # TODO need to wait for rescaling
-        for i in env_ids:
-            rescale_scene(f"/World/envs/env_{i}/Scene")
+        #for i in env_ids:
+        #    rescale_scene(f"/World/envs/env_{i}/Scene")
 
         self._index = -1
