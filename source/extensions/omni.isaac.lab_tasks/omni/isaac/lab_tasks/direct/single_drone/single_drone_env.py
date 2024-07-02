@@ -13,7 +13,7 @@ import pickle
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.envs import DirectRLEnv
-from omni.isaac.lab.envs.ui import BaseEnvWindow
+#from omni.isaac.lab.envs.ui import BaseEnvWindow
 from omni.isaac.lab.markers import VisualizationMarkers
 from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.sim import SimulationCfg
