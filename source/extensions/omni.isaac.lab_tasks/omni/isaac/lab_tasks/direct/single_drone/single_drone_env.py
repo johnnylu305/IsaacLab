@@ -98,6 +98,14 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.robot_pos = torch.tensor([[0., 0., 0.] for i in range(self.cfg.num_envs)]).to(self.device)
 
+        # obv
+        # N,T,H,W,3
+        self.obv_imgs = []
+        for i in range(self.cfg.num_envs):
+            self.obv_imgs.append([np.zeros((self.cfg.camera_h, self.cfg.camera_w, 3)) for i in range(self.cfg.img_t)])
+        self.obv_imgs = torch.tensor(self.obv_imgs).to(self.device)
+
+
     def _setup_scene(self):
         # prevent mirror
         self.scene.clone_environments(copy_from_source=True)
@@ -189,6 +197,9 @@ class QuadcopterEnv(DirectRLEnv):
         # get images
         depth_image = self._camera.data.output["distance_to_image_plane"].clone()
         rgb_image = self._camera.data.output["rgb"].clone()
+        for i in range(self.cfg.num_envs):
+            self.obv_imgs[i][self._index%self.cfg.img_t] = rgb_image[i][:, :, :3]
+
 
         # Settings for the occupancy grid
         org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
@@ -196,7 +207,7 @@ class QuadcopterEnv(DirectRLEnv):
         cell_size = self.cfg.env_size/self.cfg.grid_size # meters per cell
         slice_height = self.cfg.env_size/self.cfg.grid_size  # height of each slice in meters
         
-        # TODO check bug
+        # collision detection
         for i in range(self.num_envs):
             #robot_body_idx = self._robot.find_bodies("body")[0][0]
             #robot_pos = self._robot.data.body_pos_w[i, robot_body_idx 

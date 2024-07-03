@@ -66,8 +66,12 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     num_actions = 5 # x, y, z, yaw, pitch
     num_observations = 3 # rgb image, occ grid, drone pose
     num_states = 0
-    episode_length_s = 50 # max 50 images
+    episode_length_s = 500 # timeout
     debug_vis = False
+
+    # obv
+    img_t = 2 
+    
 
     # occ grid
     decrement=0.4
