@@ -88,6 +88,14 @@ class QuadcopterEnv(DirectRLEnv):
         self.z = np.linspace(2, height, self.num_points)
         self.env_step = torch.zeros(self.cfg.num_envs,)
 
+        # line trajectory
+        self.x = np.zeros(self.num_points)
+        self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
+        self.z = np.ones(self.num_points) * 4
+
+        self.occs = [set() for i in range(self.cfg.num_envs)]
+        self.col = [False for i in range(self.cfg.num_envs)]
+
 
     def _setup_scene(self):
         # prevent mirror
@@ -118,7 +126,7 @@ class QuadcopterEnv(DirectRLEnv):
                                   self.cfg.max_log_odds, self.cfg.min_log_odds, self.device)
         
         # rescale robot
-        robot_scale = get_robot_scale("/World/envs/env_0/Robot", 2)
+        robot_scale = get_robot_scale("/World/envs/env_0/Robot", 1)
         for i in range(self.num_envs):
             rescale_robot(f"/World/envs/env_{i}/Robot", robot_scale)
         self.pose_history = torch.zeros(self.cfg.num_envs, 7, int(self.max_episode_length)).to(self.device)
@@ -170,8 +178,16 @@ class QuadcopterEnv(DirectRLEnv):
         #cell_size = min(self.cfg.env_size/self.cfg.grid_size, self.cfg.env_size/self.cfg.grid_size)  # meters per cell
         #slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
         
+<<<<<<< HEAD
         #for i in range(self.num_envs):
         #    self.check_building_collision(root_state[i, :3], i, org_x, org_y, org_z, cell_size, slice_height)
+=======
+        # TODO check bug
+        for i in range(self.num_envs):
+            self.col[i] = check_building_collision(self.occs, root_state[i, :3], i, org_x, org_y, org_z, 
+                                                   cell_size, slice_height, self._terrain.env_origins)
+        #print(self.col)
+>>>>>>> 32a445acc6fd3435fb7f8ca7275897ce08181799
 
     def _get_observations(self) -> dict:
 
@@ -301,11 +317,27 @@ class QuadcopterEnv(DirectRLEnv):
                                   self.cfg.max_log_odds, self.cfg.min_log_odds, self.device)
                                   
 
+<<<<<<< HEAD
         cfg_list = []
         for scene_path in scenes_path:
             cfg_list.append(UsdFileCfg(usd_path=scene_path))
         spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", env_ids=env_ids, my_asset_list=cfg_list)
         # TODO need to wait for rescaling
+=======
+        
+        # load occ set
+        for i, scene in enumerate(scene_lists):
+            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+            occ_path = os.path.join(path, "fill_occ_set.pkl")
+            # To load the occupied voxels from the file
+            with open(occ_path, 'rb') as file:
+                self.occs[env_ids[i]] = pickle.load(file)
+
+        #print(env_ids)
+        #print(sorted(list(self.occs[0])))
+
+        # offline rescale: do not need this
+>>>>>>> 32a445acc6fd3435fb7f8ca7275897ce08181799
         #for i in env_ids:
         #    rescale_scene(f"/World/envs/env_{i}/Scene")
 

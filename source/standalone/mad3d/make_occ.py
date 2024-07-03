@@ -7,6 +7,10 @@ parser = argparse.ArgumentParser(description="Utility to create occupancy grid")
 parser.add_argument("input", type=str, help="The root to the input USD file.")
 parser.add_argument("output", type=str, help="The root to store the occupancy grid.")
 parser.add_argument(
+    "--rescale",
+    action='store_true'
+)
+parser.add_argument(
     "--max_len",
     type=float,
     default=8,
@@ -322,7 +326,8 @@ def main():
 
     for i, scene_path in enumerate(scenes_path):
         setup_scene(world, scene_path)
-        rescale_scene()
+        if args_cli.rescale:
+            rescale_scene()
         relative_path = os.path.relpath(scene_path, args_cli.input)
         dest_path = os.path.join(args_cli.output, relative_path)
         output = os.path.split(dest_path)[0]
