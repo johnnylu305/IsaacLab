@@ -104,6 +104,7 @@ class QuadcopterEnv(DirectRLEnv):
         for i in range(self.cfg.num_envs):
             self.obv_imgs.append([np.zeros((self.cfg.camera_h, self.cfg.camera_w, 3)) for i in range(self.cfg.img_t)])
         self.obv_imgs = torch.tensor(self.obv_imgs).to(self.device)
+        self.env_step = torch.zeros(self.cfg.num_envs,)
 
 
     def _setup_scene(self):
@@ -145,7 +146,7 @@ class QuadcopterEnv(DirectRLEnv):
         # Loop over each batch number
         for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
             # Generate the path pattern for the glob function
-            path_pattern = os.path.join(f'/home/dsr/Documents/Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+            path_pattern = os.path.join(f'/home/hat/Documents/Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
 
             # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
             scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
@@ -153,6 +154,8 @@ class QuadcopterEnv(DirectRLEnv):
         self.cfg_list = []
         for scene_path in scenes_path:
             self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
+        #pose_history: N x T x pose
+        self.pose_history = torch.zeros(self.cfg.num_envs, int(self.max_episode_length), 7).to(self.device)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         if self._index >= self.num_points-1:
@@ -184,7 +187,9 @@ class QuadcopterEnv(DirectRLEnv):
         #root_state[:,:3]=self._xyz + self._terrain.env_origins
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
-
+        for i in range(self.cfg.num_envs):
+            self.pose_history[i,self.env_step[i].int(),:]=root_state[i, :7]
+        self.env_step +=1
         # do not need this if decimation is large enough?
         # temporary solution for unsync bug between camera position and image
         #for i in range(3):
@@ -271,7 +276,7 @@ class QuadcopterEnv(DirectRLEnv):
         # TODO update these to rgb, occ, and drone pose
         obs = torch.cat(
             [
-                self._robot.data.root_lin_vel_b,
+                self.pose_history,
             ],
             dim=-1,
         )
@@ -299,7 +304,7 @@ class QuadcopterEnv(DirectRLEnv):
     def _reset_idx(self, env_ids: torch.Tensor | None):
         if env_ids is None or len(env_ids) == self.num_envs:
             env_ids = self._robot._ALL_INDICES
-
+        self.env_step[env_ids]=0
         self._robot.reset(env_ids)
         super()._reset_idx(env_ids)
         if len(env_ids) == self.num_envs:
