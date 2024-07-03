@@ -63,9 +63,9 @@ def find_occupied_voxels(grid):
     occupied_voxels = set()
     
     # Collect all occupied voxels and mark all non-reachable empty voxels as occupied
-    for x in range(z_dim):
-        for y in range(x_dim):
-            for z in range(y_dim):
+    for z in range(z_dim):
+        for x in range(x_dim):
+            for y in range(y_dim):
                 if grid[z, x, y] == 1 or (grid[z, x, y] == 0 and (z, x, y) not in exterior_empty_voxels):
                     occupied_voxels.add((z, x, y))
     

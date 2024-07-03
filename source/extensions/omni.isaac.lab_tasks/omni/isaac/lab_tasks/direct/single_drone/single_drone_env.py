@@ -54,7 +54,7 @@ import omni
 from omni.physx import get_physx_scene_query_interface
 from omni.isaac.core.articulations import ArticulationView
 
-from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, OccupancyGrid
+from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, OccupancyGrid
 
 
 class QuadcopterEnv(DirectRLEnv):
@@ -95,6 +95,8 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.occs = [set() for i in range(self.cfg.num_envs)]
         self.col = [False for i in range(self.cfg.num_envs)]
+
+        self.robot_pos = torch.tensor([[0., 0., 0.] for i in range(self.cfg.num_envs)]).to(self.device)
 
     def _setup_scene(self):
         # prevent mirror
@@ -164,6 +166,8 @@ class QuadcopterEnv(DirectRLEnv):
         env_ids = torch.arange(self.num_envs).to(self.device)
 
         # apply action
+        for i in range(self.num_envs):
+            self.robot_pos[i] = target_position
         root_state = torch.ones((self.num_envs, 13)).to(self.device) * 0
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
@@ -178,7 +182,13 @@ class QuadcopterEnv(DirectRLEnv):
         #for i in range(3):
         #    self.sim.step()
         #    self.scene.update(dt=0)
+       
 
+    def _get_observations(self) -> dict:
+
+        # get images
+        depth_image = self._camera.data.output["distance_to_image_plane"].clone()
+        rgb_image = self._camera.data.output["rgb"].clone()
 
         # Settings for the occupancy grid
         org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
@@ -188,15 +198,11 @@ class QuadcopterEnv(DirectRLEnv):
         
         # TODO check bug
         for i in range(self.num_envs):
-            self.col[i] = check_building_collision(self.occs, root_state[i, :3], i, org_x, org_y, org_z, 
+            #robot_body_idx = self._robot.find_bodies("body")[0][0]
+            #robot_pos = self._robot.data.body_pos_w[i, robot_body_idx 
+            self.col[i] = check_building_collision(self.occs, self.robot_pos[i], i, org_x, org_y, org_z, 
                                                    cell_size, slice_height, self._terrain.env_origins)
         #print(self.col)
-
-    def _get_observations(self) -> dict:
-
-        # get images
-        depth_image = self._camera.data.output["distance_to_image_plane"].clone()
-        rgb_image = self._camera.data.output["rgb"].clone()
 
         # get camera intrinsic and extrinsic matrix
         intrinsic_matrix = self._camera.data.intrinsic_matrices.clone()
@@ -273,10 +279,10 @@ class QuadcopterEnv(DirectRLEnv):
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        time_out = self.episode_length_buf >= self.max_episode_length-1
+        time_out = False #self.episode_length_buf >= self.max_episode_length-1
         # TODO setup died when collision happens
         died = False #
-        died = self._index > 2
+        #died = self._index > 2
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -322,6 +328,14 @@ class QuadcopterEnv(DirectRLEnv):
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)
 
+        
+        # Iterate over each slice
+        cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
+        slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
+        
+        #for i in range(len(env_ids)):
+        #    env_origin = self._terrain.env_origins[env_ids[i]].detach().cpu().numpy()
+        #    create_blocks_from_occ_set(env_ids[i], env_origin, self.occs[env_ids[i]], cell_size, slice_height, self.cfg.env_size)
         #print(env_ids)
         #print(sorted(list(self.occs[0])))
 

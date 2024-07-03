@@ -380,3 +380,35 @@ def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, 
                     else:
                         # If no translate op found, add it
                         xform.AddTranslateOp().Set(cube_pos)
+
+def create_blocks_from_occ_set(env_id, env_origin, occ_set, cell_size, slice_height, env_size):
+    stage = omni.usd.get_context().get_stage()
+    for (z, x, y) in occ_set:
+        # Calculate position based on cell coordinates
+        cube_pos = Gf.Vec3f((x*cell_size)-env_size/2.+env_origin[0], (y*cell_size)-env_size/2.+env_origin[1], slice_height*z)
+
+        #cube_pos = Gf.Vec3f((x*cell_size), (y*cell_size), slice_height*z)
+
+        # Define the cube's USD path
+        cube_prim_path = f"/World/OccupancyBlocks/BlockGt_{env_id}_{x}_{y}_{z}"
+
+        # Create a cube primitive or get the existing one
+        cube_prim = UsdGeom.Cube.Define(stage, Sdf.Path(cube_prim_path))
+        cube_prim.GetPrim().GetAttribute("size").Set(cell_size)
+
+        # Manage the transformation
+        xform = UsdGeom.Xformable(cube_prim.GetPrim())
+        xform_ops = xform.GetOrderedXformOps()
+        if not xform_ops:
+            # If no transform ops exist, add a new translate op
+            xform_op = xform.AddTranslateOp()
+            xform_op.Set(cube_pos)
+        else:
+            # If transform ops exist, modify the existing translate op
+            for op in xform_ops:
+                if op.GetOpType() == UsdGeom.XformOp.TypeTranslate:
+                    op.Set(cube_pos)
+                    break
+            else:
+                # If no translate op found, add it
+                xform.AddTranslateOp().Set(cube_pos)
