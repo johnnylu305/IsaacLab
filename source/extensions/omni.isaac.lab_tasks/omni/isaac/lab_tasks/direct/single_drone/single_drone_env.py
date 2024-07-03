@@ -141,7 +141,7 @@ class QuadcopterEnv(DirectRLEnv):
         env_ids = torch.arange(self.num_envs).to(self.device)
 
         # apply action
-        root_state = torch.ones((self.num_envs, 13)).to(self.device)
+        root_state = torch.ones((self.num_envs, 13)).to(self.device) * 0
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
         root_state[:, :3] += self._terrain.env_origins[env_ids]
@@ -281,7 +281,7 @@ class QuadcopterEnv(DirectRLEnv):
         # Loop over each batch number
         for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
             # Generate the path pattern for the glob function
-            path_pattern = os.path.join(f'/home/dsr/Documents/Dataset/Raw_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+            path_pattern = os.path.join(f'/home/dsr/Documents/Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
 
             # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
             scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))

@@ -62,7 +62,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 30 # in meter, 2 cells is one unit
 
-    decimation = 10 # _apply_action will run decimation time
+    decimation = 1000 # _apply_action will run decimation time
     num_actions = 5 # x, y, z, yaw, pitch
     num_observations = 3 # rgb image, occ grid, drone pose
     num_states = 0
