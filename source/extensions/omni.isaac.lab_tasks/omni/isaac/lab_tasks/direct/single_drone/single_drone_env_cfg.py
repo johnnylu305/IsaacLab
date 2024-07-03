@@ -52,8 +52,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'  # Use GPU if available
 
     # env
-    env_size = 30
-    grid_size = 64
+    env_size = 20
+    grid_size = 20
     preplan = True
     save_img = True
     vis_occ = True

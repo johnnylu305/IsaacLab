@@ -46,15 +46,16 @@ def spawn_from_multiple_usd_env_id(
         else:
             source_prim_paths.append(root_path)
             #source_prim_paths = [root_path]
-    #import pdb; pdb.set_trace()
+  
+    asset_list = []
     for source_prim_path in source_prim_paths:
         full_prim_path = f"{source_prim_path}/{asset_path}"
-        #for cfg in my_asset_list:
         cfg = random.choice(my_asset_list)
+        asset_list.append(cfg.usd_path)
         prim = _spawn_from_usd_file(full_prim_path, cfg.usd_path, cfg, translation, orientation)
-        #spawned_prims.append(prim)
+        
 
-    return prim
+    return prim, asset_list
         
 def spawn_from_multiple_usd(
     prim_path: str,
@@ -83,7 +84,7 @@ def spawn_from_multiple_usd(
         # resolve prim paths for spawning
         prim_paths = [f"{source_prim_path}/{asset_path}" for source_prim_path in source_prim_paths]
         # spawn asset from the given usd file
-        print(prim_paths)
+        
         asset_list = []
         for prim_path in prim_paths:
             #sample the asset config to load
