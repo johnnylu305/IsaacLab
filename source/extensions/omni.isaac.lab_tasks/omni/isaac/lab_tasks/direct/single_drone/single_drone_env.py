@@ -91,7 +91,7 @@ class QuadcopterEnv(DirectRLEnv):
         # line trajectory
         self.x = np.zeros(self.num_points)
         self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
-        self.z = np.ones(self.num_points) * 3
+        self.z = np.ones(self.num_points) * 4
 
         self.occs = [set() for i in range(self.cfg.num_envs)]
         self.col = [False for i in range(self.cfg.num_envs)]
@@ -125,7 +125,7 @@ class QuadcopterEnv(DirectRLEnv):
                                   self.cfg.max_log_odds, self.cfg.min_log_odds, self.device)
         
         # rescale robot
-        robot_scale = get_robot_scale("/World/envs/env_0/Robot", 2)
+        robot_scale = get_robot_scale("/World/envs/env_0/Robot", 1)
         for i in range(self.num_envs):
             rescale_robot(f"/World/envs/env_{i}/Robot", robot_scale)
 
@@ -186,12 +186,11 @@ class QuadcopterEnv(DirectRLEnv):
         cell_size = self.cfg.env_size/self.cfg.grid_size # meters per cell
         slice_height = self.cfg.env_size/self.cfg.grid_size  # height of each slice in meters
         
+        # TODO check bug
         for i in range(self.num_envs):
             self.col[i] = check_building_collision(self.occs, root_state[i, :3], i, org_x, org_y, org_z, 
                                                    cell_size, slice_height, self._terrain.env_origins)
-
-        print(root_state[0, :3])
-        print(self.col)
+        #print(self.col)
 
     def _get_observations(self) -> dict:
 
@@ -323,6 +322,8 @@ class QuadcopterEnv(DirectRLEnv):
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)
 
+        #print(env_ids)
+        #print(sorted(list(self.occs[0])))
 
         # offline rescale: do not need this
         #for i in env_ids:
