@@ -89,9 +89,9 @@ class QuadcopterEnv(DirectRLEnv):
         self.z = np.linspace(2, height, self.num_points)
 
         # line trajectory
-        self.x = np.zeros(self.num_points)
-        self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
-        self.z = np.ones(self.num_points) * 4
+        # self.x = np.zeros(self.num_points)
+        # self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
+        # self.z = np.ones(self.num_points) * 4
 
         self.occs = [set() for i in range(self.cfg.num_envs)]
         self.col = [False for i in range(self.cfg.num_envs)]
@@ -265,13 +265,15 @@ class QuadcopterEnv(DirectRLEnv):
  
         if points_3d_world.size()[0] > 0:
             self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
-            self.probability_grid = self.probability_grid.cpu().numpy()
-            self.probability_grid = np.where(self.probability_grid<=0.5, 1, 0)
-            for j in range(self.probability_grid.shape[0]):
+            self.occupancy_grid = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
+
+            #elf.probability_grid = self.probability_grid.cpu().numpy()
+            #self.probability_grid = np.where(self.probability_grid<=0.3, 1, 0)
+            for j in range(self.occupancy_grid.shape[0]):
                 for i in range(self.cfg.grid_size):
                     if self.cfg.vis_occ:
                         create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
-                                                     self.probability_grid[j,:,:,i], cell_size, i*slice_height, i)
+                                                     self.occupancy_grid[j,:,:,i].cpu().numpy(), cell_size, i*slice_height, i)
 
         # TODO update these to rgb, occ, and drone pose
         obs = torch.cat(
@@ -295,7 +297,7 @@ class QuadcopterEnv(DirectRLEnv):
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
-        time_out = False #self.episode_length_buf >= self.max_episode_length-1
+        time_out = self.episode_length_buf >= self.max_episode_length-1
         # TODO setup died when collision happens
         died = False #
         #died = self._index > 2
