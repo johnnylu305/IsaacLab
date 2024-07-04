@@ -278,6 +278,7 @@ def rescale_scene(scene_prim_root="/World/envs/env_0/Scene", max_len=15):
 
 def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size, slice_height, env_origins):
     # remove offset
+   
     xyz -= env_origins[env_ids]
     
     x, y, z = xyz.detach().cpu().numpy()
@@ -349,16 +350,16 @@ def compute_orientation(current_position, target_position=np.array([0, 0, 0])):
      
     return rotation_angle
 
-def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, base_height, z):
+def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, base_height, z, target=0, h_off=60):
     stage = omni.usd.get_context().get_stage()
     for x in range(occupancy_grid.shape[0]):
         for y in range(occupancy_grid.shape[1]):
-            if occupancy_grid[x, y] == 2:  # Occupied
+            if occupancy_grid[x, y] == target:  
                 # Calculate position based on cell coordinates
-                cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0], (y*cell_size)+env_origin[1], base_height+60)
+                cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0], (y*cell_size)+env_origin[1], base_height+h_off)
 
                 # Define the cube's USD path
-                cube_prim_path = f"/World/OccupancyBlocks/Block_{env_id}_{x}_{y}_{z}"
+                cube_prim_path = f"/World/OccupancyBlocks/Block_{env_id}_{x}_{y}_{z}_{target}"
 
                 # Create a cube primitive or get the existing one
                 cube_prim = UsdGeom.Cube.Define(stage, Sdf.Path(cube_prim_path))
