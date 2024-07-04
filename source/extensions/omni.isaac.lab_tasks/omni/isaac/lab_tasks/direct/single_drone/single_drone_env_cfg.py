@@ -123,7 +123,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # sensor    
     camera: CameraCfg = CameraCfg(
-        prim_path="/World/envs/env_.*/Robot/body/Camera",
+        prim_path="/World/envs/env_.*/Camera",
         offset=CameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
         update_period=0, # update every physical step
         data_types=["rgb", "distance_to_image_plane"],

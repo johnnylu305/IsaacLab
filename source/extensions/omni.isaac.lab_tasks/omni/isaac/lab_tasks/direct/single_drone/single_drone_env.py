@@ -53,6 +53,7 @@ import math
 import omni
 from omni.physx import get_physx_scene_query_interface
 from omni.isaac.core.articulations import ArticulationView
+import omni.isaac.core.utils.prims as prim_utils
 
 from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, OccupancyGrid
 
@@ -119,7 +120,6 @@ class QuadcopterEnv(DirectRLEnv):
         # robot
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
-        
         # sensor
         self._camera = Camera(self.cfg.camera)
         self.scene.sensors["camera"] = self._camera
@@ -173,6 +173,7 @@ class QuadcopterEnv(DirectRLEnv):
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
+            
 
         env_ids = torch.arange(self.num_envs).to(self.device)
 
@@ -183,10 +184,12 @@ class QuadcopterEnv(DirectRLEnv):
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
         root_state[:, :3] += self._terrain.env_origins[env_ids]
-        
+        orientation = convert_orientation_convention(root_state[:,3:7], origin="world", target="ros")
+        self._camera.set_world_poses(root_state[:, :3],  orientation)
         #root_state[:,:3]=self._xyz + self._terrain.env_origins
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
+        
         for i in range(self.cfg.num_envs):
             self.pose_history[i,self.env_step[i].int(),:]=root_state[i, :7]
         self.env_step +=1
@@ -323,7 +326,6 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-
         # clear building
         for env_id in env_ids:
             delete_prim(f'/World/envs/env_{env_id}/Scene')

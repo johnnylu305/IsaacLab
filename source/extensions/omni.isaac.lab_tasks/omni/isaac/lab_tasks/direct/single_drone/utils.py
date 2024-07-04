@@ -353,7 +353,7 @@ def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, 
     stage = omni.usd.get_context().get_stage()
     for x in range(occupancy_grid.shape[0]):
         for y in range(occupancy_grid.shape[1]):
-            if occupancy_grid[x, y] == 0:  # Occupied
+            if occupancy_grid[x, y] == 2:  # Occupied
                 # Calculate position based on cell coordinates
                 cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0], (y*cell_size)+env_origin[1], base_height+60)
 
