@@ -140,7 +140,7 @@ def dis_to_z(dist_images, intrinsic_matrix):
 
 # TODO: implement unknown and free voxels
 class OccupancyGrid:
-    def __init__(self, env_size, grid_size, decrement=0.4, increment=0.84, max_log_odds=3.5, min_log_odds=-3.5, device='cpu'):
+    def __init__(self, env_size, grid_size, decrement=0.4, increment=20, max_log_odds=3.5, min_log_odds=-3.5, device='cpu'):
         """
         Initialize the occupancy grid on the specified device (CPU or GPU).
         """
@@ -187,14 +187,18 @@ class OccupancyGrid:
         camera_position = torch.tensor(camera_position).cuda()
 
         start_pts = (camera_position).unsqueeze(0).long()
-
+        print(points.min(), points.max())
         end_pts = (points).long()
-        bresenham_path = bresenhamline((end_pts/self.resolution).long(), (start_pts/self.resolution).long(), 
+        #start_pts = torch.tensor([[5,0,5]]).cuda()
+        #end_pts = torch.tensor([[15,15,5]]).cuda()
+        bresenham_path = bresenhamline(start_pts, end_pts, 
                                         max_iter=-1, device=self.device)
-        bresenham_path = bresenham_path.clamp(0, self.grid_size[1]-1)
-
-        if bresenham_path is not None:
-            self.update_log_odds(i, bresenham_path, occupied=False)
+        print(bresenham_path.min(), bresenham_path.max())
+        #bresenham_path = bresenham_path.clamp(, self.grid_size[1]-1)
+        mask = (bresenham_path[:,0]>=0) & (bresenham_path[:,1]>=0) & (bresenham_path[:,2]>=0) &\
+            (bresenham_path[:,0]<self.grid_size[1]) & (bresenham_path[:,1]<self.grid_size[1]) & (bresenham_path[:,2]<self.grid_size[1])
+        if bresenham_path[mask] is not None:
+            self.update_log_odds(i, bresenham_path[mask], occupied=False)
 
 def get_all_mesh_prim_path(root):
     root_prim = get_prim_at_path(prim_path=root)
@@ -350,13 +354,13 @@ def compute_orientation(current_position, target_position=np.array([0, 0, 0])):
      
     return rotation_angle
 
-def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, base_height, z, target=0, h_off=60):
+def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, base_height, z,env_size, target=0, h_off=60):
     stage = omni.usd.get_context().get_stage()
     for x in range(occupancy_grid.shape[0]):
         for y in range(occupancy_grid.shape[1]):
             if occupancy_grid[x, y] == target:  
                 # Calculate position based on cell coordinates
-                cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0], (y*cell_size)+env_origin[1], base_height+h_off)
+                cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0]-env_size/2, (y*cell_size)+env_origin[1]-env_size/2, base_height+h_off)
 
                 # Define the cube's USD path
                 cube_prim_path = f"/World/OccupancyBlocks/Block_{env_id}_{x}_{y}_{z}_{target}"

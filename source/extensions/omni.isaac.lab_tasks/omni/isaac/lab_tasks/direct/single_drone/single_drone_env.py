@@ -83,7 +83,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._index=-1
         radius = self.cfg.env_size/2.0 * 0.8 # Radius of the cylinder
         height = self.cfg.env_size/2.0 * 0.5 # Height of the cylinder
-        theta = [0, np.pi/2., np.pi, np.pi*3/2]
+        #theta = [0, np.pi/2., np.pi, np.pi*3/2]
+        theta = [0]
         self.num_points = len(theta)
         self.x = radius * np.cos(theta)
         self.y = radius * np.sin(theta)
@@ -159,7 +160,7 @@ class QuadcopterEnv(DirectRLEnv):
         # Loop over each batch number
         for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
             # Generate the path pattern for the glob function
-            path_pattern = os.path.join(f'/home/dsr/Documents/Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+            path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
 
             # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
             scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
@@ -258,47 +259,49 @@ class QuadcopterEnv(DirectRLEnv):
                            cmap='gray')
                 plt.imsave(f'camera_image/{i}_rgb_{self._index}.png',
                            rgb_image[i].detach().cpu().numpy().astype(np.uint8))
-
-        # make log odd occupancy grid
-        points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
-        points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
-
-        for i in range(self._camera.data.pos_w.shape[0]):
-            mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2
-            mask_y = (points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]).abs() < self.cfg.env_size/2
-            mask_z = (points_3d_world[i,:, 2] < self.cfg.env_size) & (points_3d_world[i,:, 2] >=0) 
-
-            # Combine masks to keep rows where both xyz are within the range
-            mask = mask_x & mask_y & mask_z
-
-            offset = torch.tensor([self.cfg.env_size/2, self.cfg.env_size/2,0]).to(self.device)
-            if points_3d_world[i][mask].shape[0] > 0:
-                ratio = self.cfg.grid_size/self.cfg.env_size
-                self.grid.trace_path_and_update(i, self._camera.data.pos_w[i], 
-                                                torch.floor((points_3d_world[i][mask]+offset)*ratio))
-                self.grid.update_log_odds(i,
-                                          torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
-                                          occupied=True)
-       
-        # Iterate over each slice
-        org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
-        org_z = 0
-        cell_size = min(self.cfg.env_size/self.cfg.grid_size, self.cfg.env_size/self.cfg.grid_size)  # meters per cell
-        slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
- 
-        if points_3d_world.size()[0] > 0:
-            self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
-            # N, x_size, y_size, z_size
-            # 0: free, 1: unknown, 2: occupied
-            self.obv_occ[:, :, :, :, 0] = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
-
-            if self.cfg.vis_occ:
-                for j in range(self.obv_occ.shape[0]):
-                    for i in range(self.cfg.grid_size):
-                        create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
-                                                     self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, 2, 60)
-                        create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
-                                                     self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, 0, 90)
+        
+        if self.env_step[0] >=10:
+            depth_image = torch.clamp(depth_image, 0, self.cfg.env_size*2)
+            # make log odd occupancy grid
+            points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
+            points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
+    
+            for i in range(self._camera.data.pos_w.shape[0]):
+                mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2
+                mask_y = (points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]).abs() < self.cfg.env_size/2
+                mask_z = (points_3d_world[i,:, 2] < self.cfg.env_size) & (points_3d_world[i,:, 2] >=0) 
+    
+                # Combine masks to keep rows where both xyz are within the range
+                mask = mask_x & mask_y & mask_z
+    
+                offset = torch.tensor([self.cfg.env_size/2, self.cfg.env_size/2,0]).to(self.device)
+                if points_3d_world[i][mask].shape[0] > 0:
+                    ratio = self.cfg.grid_size/self.cfg.env_size
+                    self.grid.trace_path_and_update(i, torch.floor(self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio, 
+                                                    torch.floor((points_3d_world[i]-self._terrain.env_origins[i]+offset))*ratio)
+                    self.grid.update_log_odds(i,
+                                              torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
+                                              occupied=True)
+           
+            # Iterate over each slice
+            org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
+            org_z = 0
+            cell_size = min(self.cfg.env_size/self.cfg.grid_size, self.cfg.env_size/self.cfg.grid_size)  # meters per cell
+            slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
+     
+            if points_3d_world.size()[0] > 0:
+                self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
+                # N, x_size, y_size, z_size
+                # 0: free, 1: unknown, 2: occupied
+                self.obv_occ[:, :, :, :, 0] = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
+    
+                if self.cfg.vis_occ:
+                    for j in range(self.obv_occ.shape[0]):
+                        for i in range(self.cfg.grid_size):
+                            create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
+                                                         self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 2, 60)
+                            create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
+                                                         self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 0, 30)
         #print("grid shape", self.occupancy_grid.shape)
 
         # TODO update these to rgb, occ, and drone pose
@@ -327,8 +330,9 @@ class QuadcopterEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
         # TODO setup died when collision happens
         done = self.env_step >= self.cfg.total_img
-        died = done #
+        died = done 
         #died = self._index > 2
+
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
