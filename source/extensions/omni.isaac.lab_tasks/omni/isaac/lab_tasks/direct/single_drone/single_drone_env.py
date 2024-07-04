@@ -55,7 +55,7 @@ from omni.physx import get_physx_scene_query_interface
 from omni.isaac.core.articulations import ArticulationView
 import omni.isaac.core.utils.prims as prim_utils
 
-from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, OccupancyGrid
+from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid
 
 
 class QuadcopterEnv(DirectRLEnv):
@@ -265,6 +265,8 @@ class QuadcopterEnv(DirectRLEnv):
             # make log odd occupancy grid
             points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
             points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
+            
+            #create_blocks_from_occ_list(0, self._terrain.env_origins[0].detach().cpu().numpy(), points_3d_world[0].detach().cpu().numpy(), cell_size, slice_height, self.cfg.env_size)
     
             for i in range(self._camera.data.pos_w.shape[0]):
                 mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2

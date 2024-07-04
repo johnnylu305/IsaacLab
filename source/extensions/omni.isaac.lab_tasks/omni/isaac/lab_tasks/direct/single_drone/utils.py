@@ -140,7 +140,7 @@ def dis_to_z(dist_images, intrinsic_matrix):
 
 # TODO: implement unknown and free voxels
 class OccupancyGrid:
-    def __init__(self, env_size, grid_size, decrement=0.4, increment=20, max_log_odds=3.5, min_log_odds=-3.5, device='cpu'):
+    def __init__(self, env_size, grid_size, decrement=0.4, increment=0.84, max_log_odds=3.5, min_log_odds=-3.5, device='cpu'):
         """
         Initialize the occupancy grid on the specified device (CPU or GPU).
         """
@@ -187,12 +187,16 @@ class OccupancyGrid:
         camera_position = torch.tensor(camera_position).cuda()
 
         start_pts = (camera_position).unsqueeze(0).long()
+
         print(points.min(), points.max())
         end_pts = (points).long()
+        start_pts = start_pts.repeat(end_pts.shape[0],1)
         #start_pts = torch.tensor([[5,0,5]]).cuda()
-        #end_pts = torch.tensor([[15,15,5]]).cuda()
-        bresenham_path = bresenhamline(start_pts, end_pts, 
-                                        max_iter=-1, device=self.device)
+        #end_pts = torch.tensor([[15,15,5],[10,10,10]]).cuda()
+        #import pdb; pdb.set_trace()
+        print(start_pts.shape)
+        print(end_pts.shape)
+        bresenham_path = bresenhamline(end_pts, start_pts, max_iter=-1, device=self.device)
         print(bresenham_path.min(), bresenham_path.max())
         #bresenham_path = bresenham_path.clamp(, self.grid_size[1]-1)
         mask = (bresenham_path[:,0]>=0) & (bresenham_path[:,1]>=0) & (bresenham_path[:,2]>=0) &\
@@ -417,3 +421,37 @@ def create_blocks_from_occ_set(env_id, env_origin, occ_set, cell_size, slice_hei
             else:
                 # If no translate op found, add it
                 xform.AddTranslateOp().Set(cube_pos)
+                
+def create_blocks_from_occ_list(env_id, env_origin, occ_set, cell_size, slice_height, env_size):
+    stage = omni.usd.get_context().get_stage()
+    i = 0
+    for (x, y, z) in occ_set:
+        # Calculate position based on cell coordinates
+        cube_pos = Gf.Vec3f((x*cell_size)-env_size/2.+env_origin[0], (y*cell_size)-env_size/2.+env_origin[1], slice_height*z-20)
+
+        #cube_pos = Gf.Vec3f((x*cell_size), (y*cell_size), slice_height*z)
+
+        # Define the cube's USD path
+        cube_prim_path = f"/World/OccupancyBlocks/BlockEnd_{env_id}_{i}"
+        i += 1
+        # Create a cube primitive or get the existing one
+        cube_prim = UsdGeom.Cube.Define(stage, Sdf.Path(cube_prim_path))
+        cube_prim.GetPrim().GetAttribute("size").Set(cell_size)
+
+        # Manage the transformation
+        xform = UsdGeom.Xformable(cube_prim.GetPrim())
+        xform_ops = xform.GetOrderedXformOps()
+        if not xform_ops:
+            # If no transform ops exist, add a new translate op
+            xform_op = xform.AddTranslateOp()
+            xform_op.Set(cube_pos)
+        else:
+            # If transform ops exist, modify the existing translate op
+            for op in xform_ops:
+                if op.GetOpType() == UsdGeom.XformOp.TypeTranslate:
+                    op.Set(cube_pos)
+                    break
+            else:
+                # If no translate op found, add it
+                xform.AddTranslateOp().Set(cube_pos)
+

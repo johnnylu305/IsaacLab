@@ -59,7 +59,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     vis_occ = True
     save_env_ids = [0, 1]
 
-    num_envs = 1 # this might be overwrote by parser
+    num_envs = 8 # this might be overwrote by parser
     env_spacing = 30 # in meter, 2 cells is one unit
 
     decimation = 5 # _apply_action will run decimation time
