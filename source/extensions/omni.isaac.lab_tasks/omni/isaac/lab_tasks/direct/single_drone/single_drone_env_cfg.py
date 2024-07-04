@@ -71,7 +71,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # obv
     img_t = 2 
-    
+    total_img = 50
 
     # occ grid
     decrement=0.4
