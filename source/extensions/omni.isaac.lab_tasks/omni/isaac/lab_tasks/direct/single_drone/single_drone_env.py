@@ -89,9 +89,9 @@ class QuadcopterEnv(DirectRLEnv):
         self.z = np.linspace(2, height, self.num_points)
 
         # line trajectory
-        # self.x = np.zeros(self.num_points)
-        # self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
-        # self.z = np.ones(self.num_points) * 4
+        self.x = np.zeros(self.num_points)
+        self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
+        self.z = np.ones(self.num_points) * 4
 
         self.occs = [set() for i in range(self.cfg.num_envs)]
         self.col = [False for i in range(self.cfg.num_envs)]
@@ -146,7 +146,7 @@ class QuadcopterEnv(DirectRLEnv):
         # Loop over each batch number
         for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
             # Generate the path pattern for the glob function
-            path_pattern = os.path.join(f'/home/hat/Documents/Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+            path_pattern = os.path.join(f'/home/dsr/Documents/Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
 
             # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
             scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
@@ -178,7 +178,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         # apply action
         for i in range(self.num_envs):
-            self.robot_pos[i] = target_position
+            self.robot_pos[i] = target_position+self._terrain.env_origins[env_ids[i]].detach().cpu()
         root_state = torch.ones((self.num_envs, 13)).to(self.device) * 0
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
@@ -287,13 +287,14 @@ class QuadcopterEnv(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
+        #print("col", torch.tensor(self.col).float().reshape(-1, 1))
         # TODO implement rewards
         rewards = {
             "coverage_ratio": torch.tensor([0]).repeat(self.num_envs),
-            "collision": torch.tensor([0]).repeat(self.num_envs),
+            "collision": torch.tensor(self.col).float().reshape(-1, 1),
         }
 
-        reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+        reward = 0 #torch.sum(torch.stack(list(rewards.values())), dim=0)
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:

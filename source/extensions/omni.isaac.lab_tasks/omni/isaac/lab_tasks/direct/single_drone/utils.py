@@ -278,6 +278,7 @@ def rescale_scene(scene_prim_root="/World/envs/env_0/Scene", max_len=15):
 
 def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size, slice_height, env_origins):
     # remove offset
+   
     xyz -= env_origins[env_ids]
     
     x, y, z = xyz.detach().cpu().numpy()
