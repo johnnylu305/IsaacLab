@@ -89,9 +89,9 @@ class QuadcopterEnv(DirectRLEnv):
         self.z = np.linspace(2, height, self.num_points)
 
         # line trajectory
-        self.x = np.zeros(self.num_points)
-        self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
-        self.z = np.ones(self.num_points) * 4
+        #self.x = np.zeros(self.num_points)
+        #self.y = np.linspace(-self.cfg.env_size/2.0*0.6, self.cfg.env_size/2.0*0.6, self.num_points)
+        #self.z = np.ones(self.num_points) * 4
 
         self.occs = [set() for i in range(self.cfg.num_envs)]
         self.col = [False for i in range(self.cfg.num_envs)]
@@ -110,7 +110,15 @@ class QuadcopterEnv(DirectRLEnv):
         self.obv_imgs = torch.tensor(self.obv_imgs).to(self.device)
         # N,T,xyzwxyz
         self.obv_pose_history = torch.zeros(self.cfg.num_envs, self.cfg.total_img, 7).to(self.device)
-
+        # N, x_size, y_size, z_size, label+xyz
+        self.obv_occ = torch.ones(self.cfg.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size, 4, device=self.device)
+        # Generate the linearly spaced values for each dimension
+        x_coords = torch.linspace(-self.cfg.env_size/2.0, self.cfg.env_size/2.0, self.cfg.grid_size, device=self.device)
+        y_coords = torch.linspace(-self.cfg.env_size/2.0, self.cfg.env_size/2.0, self.cfg.grid_size, device=self.device)
+        z_coords = torch.linspace(0.0, self.cfg.env_size, self.cfg.grid_size, device=self.device)
+        # Create a meshgrid of the coordinates
+        x_mesh, y_mesh, z_mesh = torch.meshgrid(x_coords, y_coords, z_coords, indexing='ij')
+        self.obv_occ[:, :, :, :, 1:] = torch.stack((x_mesh, y_mesh, z_mesh), dim=-1)
 
     def _setup_scene(self):
         # prevent mirror
@@ -278,15 +286,18 @@ class QuadcopterEnv(DirectRLEnv):
  
         if points_3d_world.size()[0] > 0:
             self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
-            self.occupancy_grid = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
+            # N, x_size, y_size, z_size
+            # 0: free, 1: unknown, 2: occupied
+            self.obv_occ[:, :, :, :, 0] = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
 
-            #elf.probability_grid = self.probability_grid.cpu().numpy()
-            #self.probability_grid = np.where(self.probability_grid<=0.3, 1, 0)
-            for j in range(self.occupancy_grid.shape[0]):
-                for i in range(self.cfg.grid_size):
-                    if self.cfg.vis_occ:
+            if self.cfg.vis_occ:
+                for j in range(self.obv_occ.shape[0]):
+                    for i in range(self.cfg.grid_size):
                         create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
-                                                     self.occupancy_grid[j,:,:,i].cpu().numpy(), cell_size, i*slice_height, i)
+                                                     self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, 2, 60)
+                        create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
+                                                     self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, 0, 90)
+        #print("grid shape", self.occupancy_grid.shape)
 
         # TODO update these to rgb, occ, and drone pose
         obs = torch.cat(
@@ -338,6 +349,10 @@ class QuadcopterEnv(DirectRLEnv):
         # reset pose obv
         for i in env_ids:
             self.obv_pose_history[i] = torch.zeros(self.cfg.total_img, 7).to(self.device)
+
+        # reset occ obv
+        for i in env_ids:
+            self.obv_occ[i, :, :, :, 0] = 1
 
         self._actions[env_ids] = 0.0
         # Reset robot state
