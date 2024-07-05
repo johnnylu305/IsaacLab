@@ -83,8 +83,7 @@ class QuadcopterEnv(DirectRLEnv):
         self._index=-1
         radius = self.cfg.env_size/2.0 * 0.8 # Radius of the cylinder
         height = self.cfg.env_size/2.0 * 0.5 # Height of the cylinder
-        #theta = [0, np.pi/2., np.pi, np.pi*3/2]
-        theta = [0]
+        theta = [0, np.pi/2., np.pi, np.pi*3/2]
         self.num_points = len(theta)
         self.x = radius * np.cos(theta)
         self.y = radius * np.sin(theta)
@@ -96,6 +95,7 @@ class QuadcopterEnv(DirectRLEnv):
         #self.z = np.ones(self.num_points) * 4
 
         self.occs = [set() for i in range(self.cfg.num_envs)]
+        self.gt_occs = torch.zeros((self.cfg.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size)).to(self.device)
         self.col = [False for i in range(self.cfg.num_envs)]
 
         self.robot_pos = torch.tensor([[0., 0., 0.] for i in range(self.cfg.num_envs)]).to(self.device)
@@ -204,7 +204,7 @@ class QuadcopterEnv(DirectRLEnv):
         root_state[:,3:7] = target_orientation
         root_state[:, :3] += self._terrain.env_origins[env_ids]
         orientation = convert_orientation_convention(root_state[:,3:7], origin="world", target="ros")
-        self._camera.set_world_poses(root_state[:, :3],  orientation)
+        self._camera.set_world_poses(root_state[:, :3]+torch.tensor(self.cfg.camera_offset).to(self.device),  orientation)
         #root_state[:,:3]=self._xyz + self._terrain.env_origins
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
@@ -261,51 +261,55 @@ class QuadcopterEnv(DirectRLEnv):
                 plt.imsave(f'camera_image/{i}_rgb_{self._index}.png',
                            rgb_image[i].detach().cpu().numpy().astype(np.uint8))
         
-        if self.env_step[0] >=10:
-            depth_image = torch.clamp(depth_image, 0, self.cfg.env_size*2)
-            # make log odd occupancy grid
-            points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
-            points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
-            
-            #create_blocks_from_occ_list(0, self._terrain.env_origins[0].detach().cpu().numpy(), points_3d_world[0].detach().cpu().numpy(), cell_size, slice_height, self.cfg.env_size)
-    
-            for i in range(self._camera.data.pos_w.shape[0]):
-                mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2
-                mask_y = (points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]).abs() < self.cfg.env_size/2
-                mask_z = (points_3d_world[i,:, 2] < self.cfg.env_size) & (points_3d_world[i,:, 2] >=0) 
-    
-                # Combine masks to keep rows where both xyz are within the range
-                mask = mask_x & mask_y & mask_z
-    
-                offset = torch.tensor([self.cfg.env_size/2, self.cfg.env_size/2,0]).to(self.device)
-                if points_3d_world[i][mask].shape[0] > 0:
-                    ratio = self.cfg.grid_size/self.cfg.env_size
-                    self.grid.trace_path_and_update(i, torch.floor(self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio, 
-                                                    torch.floor((points_3d_world[i]-self._terrain.env_origins[i]+offset))*ratio)
-                    self.grid.update_log_odds(i,
-                                              torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
-                                              occupied=True)
-           
-            # Iterate over each slice
-            org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
-            org_z = 0
-            cell_size = min(self.cfg.env_size/self.cfg.grid_size, self.cfg.env_size/self.cfg.grid_size)  # meters per cell
-            slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
-     
-            if points_3d_world.size()[0] > 0:
-                self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
-                # N, x_size, y_size, z_size
-                # 0: free, 1: unknown, 2: occupied
-                self.obv_occ[:, :, :, :, 0] = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
-    
-                if self.cfg.vis_occ:
-                    for j in range(self.obv_occ.shape[0]):
-                        for i in range(self.cfg.grid_size):
-                            create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
-                                                         self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 2, 60)
-                            create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
-                                                         self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 0, 30)
+
+        depth_image = torch.clamp(depth_image, 0, self.cfg.env_size*2)
+        # make log odd occupancy grid
+        points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
+        points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
+        
+        #create_blocks_from_occ_list(0, self._terrain.env_origins[0].detach().cpu().numpy(), points_3d_world[0].detach().cpu().numpy(), cell_size, slice_height, self.cfg.env_size)
+
+        for i in range(self._camera.data.pos_w.shape[0]):
+            mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2
+            mask_y = (points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]).abs() < self.cfg.env_size/2
+            mask_z = (points_3d_world[i,:, 2] < self.cfg.env_size) & (points_3d_world[i,:, 2] >=0) 
+
+            # Combine masks to keep rows where both xyz are within the range
+            mask = mask_x & mask_y & mask_z
+
+            offset = torch.tensor([self.cfg.env_size/2, self.cfg.env_size/2,0]).to(self.device)
+            if points_3d_world[i][mask].shape[0] > 0:
+                ratio = self.cfg.grid_size/self.cfg.env_size
+                self.grid.trace_path_and_update(i, torch.floor(self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio, 
+                                                torch.floor((points_3d_world[i]-self._terrain.env_origins[i]+offset))*ratio)
+                self.grid.update_log_odds(i,
+                                          torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
+                                          occupied=True)
+       
+        # Iterate over each slice
+        org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
+        org_z = 0
+        cell_size = min(self.cfg.env_size/self.cfg.grid_size, self.cfg.env_size/self.cfg.grid_size)  # meters per cell
+        slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
+ 
+        if points_3d_world.size()[0] > 0:
+            self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
+            # N, x_size, y_size, z_size
+            # 0: free, 1: unknown, 2: occupied
+            self.obv_occ[:, :, :, :, 0] = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
+
+            if self.cfg.vis_occ:
+                for j in range(self.obv_occ.shape[0]):
+                    for i in range(self.cfg.grid_size):
+                        create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
+                                                     self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 2, 60)
+                        #create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
+                        #                             self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 0, 30)
         #print("grid shape", self.occupancy_grid.shape)
+
+        # pose: N, T, 7
+        # img: N, T', H, W, 3
+        # occ: N, grid_size, grid_size, grid_size, 7
 
         # TODO update these to rgb, occ, and drone pose
         obs = torch.cat(
@@ -319,14 +323,16 @@ class QuadcopterEnv(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
-        #print("col", torch.tensor(self.col).float().reshape(-1, 1))
+        num_match_occ = torch.sum(torch.logical_and(torch.where(self.obv_occ[:, :, :, :, 0]==2, 1, 0), self.gt_occs), dim=(1, 2, 3))
+        total_occ = torch.sum(self.gt_occs, dim=(1, 2, 3))
+       
         # TODO implement rewards
         rewards = {
-            "coverage_ratio": torch.tensor([0]).repeat(self.num_envs),
-            "collision": torch.tensor(self.col).float().reshape(-1, 1),
+            "coverage_ratio": (num_match_occ/total_occ).reshape(-1, 1),
+            "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device),
         }
 
-        reward = 0 #torch.sum(torch.stack(list(rewards.values())), dim=0)
+        reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -387,17 +393,20 @@ class QuadcopterEnv(DirectRLEnv):
                                                         env_ids=env_ids, my_asset_list=self.cfg_list)
 
         
-        # load occ set
+        # load occ set and gt
         for i, scene in enumerate(scene_lists):
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
             occ_path = os.path.join(path, "fill_occ_set.pkl")
             # To load the occupied voxels from the file
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)      
-  
+            
+            occ_path = os.path.join(path, "occ.npy")
+            self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
+           
        
-        #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
-        #slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
+        cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
+        slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters
         
         #for i in range(len(env_ids)):
         #    env_origin = self._terrain.env_origins[env_ids[i]].detach().cpu().numpy()
