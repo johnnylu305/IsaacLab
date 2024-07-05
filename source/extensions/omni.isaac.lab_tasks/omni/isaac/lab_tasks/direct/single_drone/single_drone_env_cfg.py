@@ -80,7 +80,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     min_log_odds=-3.5
 
     # sensor
-    camera_offset = (0.1, 0.0, 0.0)
+    camera_offset = [0.0, 0.0, -0.2]
     camera_w, camera_h = 200, 200
 
     # reward scales

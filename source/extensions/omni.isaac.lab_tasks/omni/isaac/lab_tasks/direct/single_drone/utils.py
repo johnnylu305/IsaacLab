@@ -188,16 +188,16 @@ class OccupancyGrid:
 
         start_pts = (camera_position).unsqueeze(0).long()
 
-        print(points.min(), points.max())
+        #print(points.min(), points.max())
         end_pts = (points).long()
         start_pts = start_pts.repeat(end_pts.shape[0],1)
         #start_pts = torch.tensor([[5,0,5]]).cuda()
         #end_pts = torch.tensor([[15,15,5],[10,10,10]]).cuda()
         #import pdb; pdb.set_trace()
-        print(start_pts.shape)
-        print(end_pts.shape)
+        #print(start_pts.shape)
+        #print(end_pts.shape)
         bresenham_path = bresenhamline(end_pts, start_pts, max_iter=-1, device=self.device)
-        print(bresenham_path.min(), bresenham_path.max())
+        #print(bresenham_path.min(), bresenham_path.max())
         #bresenham_path = bresenham_path.clamp(, self.grid_size[1]-1)
         mask = (bresenham_path[:,0]>=0) & (bresenham_path[:,1]>=0) & (bresenham_path[:,2]>=0) &\
             (bresenham_path[:,0]<self.grid_size[1]) & (bresenham_path[:,1]<self.grid_size[1]) & (bresenham_path[:,2]<self.grid_size[1])
