@@ -107,7 +107,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
             restitution=0.0,
         ),
         gravity=(0.0, 0.0, 0.0), # disable gravity
-        enable_scene_query_support=False # disable collision query
+        enable_scene_query_support=False, # disable collision query
+        render_interval=decimation
     )
 
     # ground	
