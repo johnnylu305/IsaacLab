@@ -191,8 +191,8 @@ class QuadcopterEnv(DirectRLEnv):
             target_position = torch.from_numpy(target_position).unsqueeze(0)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
             
-        pitch_radians = 0.1
-        pitch_quat = rot_utils.euler_angles_to_quats(np.array([0, pitch_radians, yaw]), degrees=False)
+        pitch_radians = 0.2
+        #pitch_quat = torch.from_numpy(rot_utils.euler_angles_to_quats(np.array([0, pitch_radians, yaw]), degrees=False)).unsqueeze(0).float()
         env_ids = torch.arange(self.num_envs).to(self.device)
 
         # apply action
@@ -203,8 +203,14 @@ class QuadcopterEnv(DirectRLEnv):
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
         root_state[:, :3] += self._terrain.env_origins[env_ids]
+        drone_euler = rot_utils.quats_to_euler_angles(root_state[:,3:7].cpu().numpy())
+        drone_euler[:,1] += pitch_radians
+        pitch_quat = torch.from_numpy(rot_utils.euler_angles_to_quats(drone_euler, degrees=False)).float()
+        #import pdb; pdb.set_trace()
         orientation = convert_orientation_convention(root_state[:,3:7], origin="world", target="ros")
-        self._camera.set_world_poses(root_state[:, :3]+torch.tensor(self.cfg.camera_offset).to(self.device),  orientation)
+        
+        orientation_camera = convert_orientation_convention(pitch_quat, origin="world", target="ros")
+        self._camera.set_world_poses(root_state[:, :3]+torch.tensor(self.cfg.camera_offset).to(self.device),  orientation_camera)
         #root_state[:,:3]=self._xyz + self._terrain.env_origins
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
