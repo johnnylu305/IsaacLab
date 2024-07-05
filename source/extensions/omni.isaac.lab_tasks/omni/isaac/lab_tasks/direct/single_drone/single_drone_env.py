@@ -191,7 +191,8 @@ class QuadcopterEnv(DirectRLEnv):
             target_position = torch.from_numpy(target_position).unsqueeze(0)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
             
-
+        pitch_radians = 0.1
+        pitch_quat = rot_utils.euler_angles_to_quats(np.array([0, pitch_radians, yaw]), degrees=False)
         env_ids = torch.arange(self.num_envs).to(self.device)
 
         # apply action
