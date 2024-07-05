@@ -58,35 +58,40 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     save_img = True
     vis_occ = False
     save_env_ids = [0, 1]
+    save_img_freq = 100
 
-    num_envs = 8 # this might be overwrote by parser
+    num_envs = 2 # this might be overwrote by parser
     env_spacing = 30 # in meter, 2 cells is one unit
 
     decimation = 5 # _apply_action will run decimation time
     num_actions = 5 # x, y, z, yaw, pitch
-    num_observations = 350000 # rgb image, occ grid, drone pose
     num_states = 0
-    episode_length_s = 500 # timeout
+    episode_length_s = 200 # timeout
     debug_vis = False
 
     # obv
     img_t = 2 
-    total_img = 50000
+    total_img = 50
 
     # occ grid
-    decrement=0.4
-    increment=0.84
-    max_log_odds=3.5
-    min_log_odds=-3.5
+    decrement = 0.4
+    increment = 0.84
+    max_log_odds = 3.5
+    min_log_odds = -3.5
 
     # sensor
     camera_offset = [0.0, 0.0, -0.2]
-    camera_w, camera_h = 200, 200
+    camera_w, camera_h = 300, 300 # try 400 x 400 in the future
+
+    # obv
+    num_observations = total_img * 5
+    img_observations = [img_t, camera_h, camera_w, 3]
+    pose_observations = [total_img, 5] # N, xyz + yaw + pitch
+    occ_observations = [grid_size, grid_size, grid_size, 4] # label + xyz
 
     # reward scales
-    lin_vel_reward_scale = -0.05
-    ang_vel_reward_scale = -0.01
-    distance_to_goal_reward_scale = 15.0
+    occ_reward_scale = 1.0
+    col_reward_scale = -10
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
