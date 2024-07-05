@@ -34,6 +34,7 @@ from stable_baselines3 import PPO
 import omni.isaac.lab_tasks  # noqa: F401
 from omni.isaac.lab_tasks.utils import parse_env_cfg, load_cfg_from_registry
 from omni.isaac.lab_tasks.utils.wrappers.sb3 import Sb3VecEnvWrapper, process_sb3_cfg
+from sb3_encoder import CustomCombinedExtractor
 
 def main():
     """Random actions agent with Isaac Lab environment."""
