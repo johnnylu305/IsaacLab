@@ -54,7 +54,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # env
     env_size = 20
     grid_size = 20
-    preplan = True
+    preplan = False
     save_img = True
     vis_occ = False
     save_env_ids = [0, 1]
