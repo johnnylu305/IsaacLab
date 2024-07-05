@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import torch
 import pickle
-
+import gymnasium as gym
 
 
 import omni.isaac.lab.sim as sim_utils
@@ -221,6 +221,27 @@ class QuadcopterEnv(DirectRLEnv):
         #    self.sim.step()
         #    self.scene.update(dt=0)
        
+    def _configure_gym_env_spaces(self):
+        """Configure the action and observation spaces for the Gym environment."""
+        # observation space (unbounded since we don't impose any limits)
+        self.num_actions = self.cfg.num_actions
+        self.num_observations = self.cfg.num_observations
+        self.num_states = self.cfg.num_states
+
+        # set up spaces
+        self.single_observation_space = gym.spaces.Dict()
+        self.single_observation_space["policy"] = gym.spaces.Dict()
+        self.single_observation_space["policy"]["pose"] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_observations,))
+        self.single_action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_actions,))
+
+        # batch the spaces for vectorized environments
+        self.observation_space = gym.vector.utils.batch_space(self.single_observation_space["policy"], self.num_envs)
+        self.action_space = gym.vector.utils.batch_space(self.single_action_space, self.num_envs)
+
+        # optional state space for asymmetric actor-critic architectures
+        if self.num_states > 0:
+            self.single_observation_space["critic"] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_states,))
+            self.state_space = gym.vector.utils.batch_space(self.single_observation_space["critic"], self.num_envs)
 
     def _get_observations(self) -> dict:
 
@@ -318,12 +339,8 @@ class QuadcopterEnv(DirectRLEnv):
         # occ: N, grid_size, grid_size, grid_size, 7
 
         # TODO update these to rgb, occ, and drone pose
-        obs = torch.cat(
-            [
-                self.obv_pose_history.reshape(self.cfg.num_envs, -1),
-            ],
-            dim=-1,
-        )
+        obs = {"pose": self.obv_pose_history.reshape(self.cfg.num_envs, -1)}
+          
         
         observations = {"policy": obs}
 

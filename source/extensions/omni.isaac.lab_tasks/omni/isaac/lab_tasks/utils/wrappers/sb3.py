@@ -28,6 +28,7 @@ from stable_baselines3.common.utils import constant_fn
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, VecEnvStepReturn
 
 from omni.isaac.lab.envs import DirectRLEnv, ManagerBasedRLEnv
+from source.standalone.mad3d.sb3_encoder import CustomCombinedExtractor
 
 """
 Configuration Parser.
