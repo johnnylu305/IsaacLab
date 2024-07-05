@@ -23,11 +23,13 @@ import numpy as np
 import torch
 import torch.nn as nn  # noqa: F401
 from typing import Any
+import sys
 
 from stable_baselines3.common.utils import constant_fn
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, VecEnvStepReturn
 
 from omni.isaac.lab.envs import DirectRLEnv, ManagerBasedRLEnv
+sys.path.append('./')
 from source.standalone.mad3d.sb3_encoder import CustomCombinedExtractor
 
 """

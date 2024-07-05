@@ -323,7 +323,6 @@ class QuadcopterEnv(DirectRLEnv):
                 ratio = self.cfg.grid_size/self.cfg.env_size
                 self.grid.trace_path_and_update(i, torch.floor(self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio, 
                                                 torch.floor((points_3d_world[i]-self._terrain.env_origins[i]+offset))*ratio)
-                print(torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio).min(), torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio).max())
                 self.grid.update_log_odds(i,
                                           torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
                                           occupied=True)
