@@ -56,7 +56,7 @@ from omni.isaac.core.articulations import ArticulationView
 import omni.isaac.core.utils.prims as prim_utils
 
 from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid
-
+import time
 
 class QuadcopterEnv(DirectRLEnv):
     cfg: QuadcopterEnvCfg
@@ -258,7 +258,7 @@ class QuadcopterEnv(DirectRLEnv):
             self.state_space = gym.vector.utils.batch_space(self.single_observation_space["critic"], self.num_envs)
 
     def _get_observations(self) -> dict:
-
+        start_time = time.perf_counter()
         # get images
         depth_image = self._camera.data.output["distance_to_image_plane"].clone()
         rgb_image = self._camera.data.output["rgb"].clone()
@@ -309,7 +309,7 @@ class QuadcopterEnv(DirectRLEnv):
         points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
         
         #create_blocks_from_occ_list(0, self._terrain.env_origins[0].detach().cpu().numpy(), points_3d_world[0].detach().cpu().numpy(), cell_size, slice_height, self.cfg.env_size)
-
+        start_time = time.perf_counter()
         for i in range(self._camera.data.pos_w.shape[0]):
             mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2 - 1e-3
             mask_y = (points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]).abs() < self.cfg.env_size/2 - 1e-3
@@ -326,7 +326,6 @@ class QuadcopterEnv(DirectRLEnv):
                 self.grid.update_log_odds(i,
                                           torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
                                           occupied=True)
-       
         # Iterate over each slice
         org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
         org_z = 0
@@ -357,7 +356,6 @@ class QuadcopterEnv(DirectRLEnv):
           
         
         observations = {"policy": obs}
-
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
@@ -455,5 +453,4 @@ class QuadcopterEnv(DirectRLEnv):
         # offline rescale: do not need this
         #for i in env_ids:
         #    rescale_scene(f"/World/envs/env_{i}/Scene")
-
         self._index = -1
