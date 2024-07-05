@@ -180,31 +180,45 @@ class QuadcopterEnv(DirectRLEnv):
 
         # TODO clamp each action
         self._actions = actions.clone().clamp(-1.0, 1.0)
-        self._xyz=self._actions[:, :3]*15
-        self._yaw=self._actions[:,3]
+        self._xyz=self._actions[:, :3]*self.cfg.env_size/2
+        self._yaw=self._actions[:,3]*torch.pi
+        self._pitch=(self._actions[:,4]+1)*torch.pi/4.
 
     def _apply_action(self):
         if self.cfg.preplan:
             target_position = np.array([self.x[self._index], self.y[self._index], self.z[self._index]])
             yaw = compute_orientation(target_position)
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
-            target_position = torch.from_numpy(target_position).unsqueeze(0)
+            target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
+            target_orientation = target_orientation.repeat(self.num_envs,1)
+            yaw = yaw * torch.ones(self.num_envs,).to(self.device)
+            pitch_radians = 0.2 * torch.ones(self.num_envs,).to(self.device)
             
-        pitch_radians = 0.2
+        else:
+            target_position = self._xyz
+            pitch_radians = self._pitch
+            yaw = self._yaw
+            target_orientation = rot_utils.euler_angles_to_quats(torch.cat([torch.zeros(yaw.shape[0],1), torch.zeros(yaw.shape[0],1), yaw.cpu().unsqueeze(1)],dim=1).numpy(), degrees=False)
+            target_orientation = torch.from_numpy(target_orientation)
+        
         #pitch_quat = torch.from_numpy(rot_utils.euler_angles_to_quats(np.array([0, pitch_radians, yaw]), degrees=False)).unsqueeze(0).float()
         env_ids = torch.arange(self.num_envs).to(self.device)
 
         # apply action
-        for i in range(self.num_envs):
-            self.robot_pos[i] = target_position + self._terrain.env_origins[env_ids[i]].detach().cpu()
-            self.robot_ori[i] = target_orientation
+        #for i in range(self.num_envs):
+        #    self.robot_pos[i] = target_position + self._terrain.env_origins[env_ids[i]].detach().cpu()
+        #    self.robot_ori[i] = target_orientation
+        self.robot_pos = target_position + self._terrain.env_origins
+        self.robot_ori = target_orientation
         root_state = torch.ones((self.num_envs, 13)).to(self.device) * 0
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
         root_state[:, :3] += self._terrain.env_origins[env_ids]
-        drone_euler = rot_utils.quats_to_euler_angles(root_state[:,3:7].cpu().numpy())
-        drone_euler[:,1] += pitch_radians
+        #drone_euler = rot_utils.quats_to_euler_angles(root_state[:,3:7].cpu().numpy())
+        #import pdb; pdb.set_trace()
+        drone_euler = torch.cat([torch.zeros(yaw.shape[0],1).to(self.device), pitch_radians.unsqueeze(1), yaw.unsqueeze(1)], dim=1).cpu()
+        #drone_euler[:,1] += pitch_radians
         pitch_quat = torch.from_numpy(rot_utils.euler_angles_to_quats(drone_euler, degrees=False)).float()
         #import pdb; pdb.set_trace()
         orientation = convert_orientation_convention(root_state[:,3:7], origin="world", target="ros")
@@ -276,18 +290,19 @@ class QuadcopterEnv(DirectRLEnv):
         #create_blocks_from_occ_list(0, self._terrain.env_origins[0].detach().cpu().numpy(), points_3d_world[0].detach().cpu().numpy(), cell_size, slice_height, self.cfg.env_size)
 
         for i in range(self._camera.data.pos_w.shape[0]):
-            mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2
-            mask_y = (points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]).abs() < self.cfg.env_size/2
-            mask_z = (points_3d_world[i,:, 2] < self.cfg.env_size) & (points_3d_world[i,:, 2] >=0) 
+            mask_x = (points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]).abs() < self.cfg.env_size/2 - 1e-3
+            mask_y = (points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]).abs() < self.cfg.env_size/2 - 1e-3
+            mask_z = (points_3d_world[i,:, 2] < self.cfg.env_size - 1e-3) & (points_3d_world[i,:, 2] >=0) 
 
             # Combine masks to keep rows where both xyz are within the range
             mask = mask_x & mask_y & mask_z
-
+            
             offset = torch.tensor([self.cfg.env_size/2, self.cfg.env_size/2,0]).to(self.device)
             if points_3d_world[i][mask].shape[0] > 0:
                 ratio = self.cfg.grid_size/self.cfg.env_size
                 self.grid.trace_path_and_update(i, torch.floor(self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio, 
                                                 torch.floor((points_3d_world[i]-self._terrain.env_origins[i]+offset))*ratio)
+                print(torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio).min(), torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio).max())
                 self.grid.update_log_odds(i,
                                           torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
                                           occupied=True)
