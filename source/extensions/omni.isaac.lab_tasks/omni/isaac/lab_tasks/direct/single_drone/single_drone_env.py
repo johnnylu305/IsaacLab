@@ -116,6 +116,8 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.env_episode = np.ones(self.cfg.num_envs).astype(np.int32) * -1
 
+        self.last_coverage_ratio = torch.zeros(self.cfg.num_envs, device=self.device).reshape(-1, 1)
+
     def _setup_scene(self):
 
         # terrain
@@ -357,9 +359,10 @@ class QuadcopterEnv(DirectRLEnv):
         total_occ = torch.sum(self.gt_occs, dim=(1, 2, 3))
        
         rewards = {
-            "coverage_ratio": (num_match_occ/total_occ).reshape(-1, 1) * self.cfg.occ_reward_scale,
+            "coverage_ratio": ((num_match_occ/total_occ).reshape(-1, 1) - self.last_coverage_ratio) * self.cfg.occ_reward_scale,
             "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device) * self.cfg.col_reward_scale,
         }
+        self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0).reshape(-1)
         return reward
@@ -397,6 +400,9 @@ class QuadcopterEnv(DirectRLEnv):
         # reset occ obv
         for i in env_ids:
             self.obv_occ[i, :, :, :, 0] = 1
+
+        for i in env_ids:
+            self.last_coverage_ratio[i] = 0
 
         self._actions[env_ids] = 0.0
         # Reset robot state
