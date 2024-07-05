@@ -64,7 +64,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     decimation = 5 # _apply_action will run decimation time
     num_actions = 5 # x, y, z, yaw, pitch
-    num_observations = 3 # rgb image, occ grid, drone pose
+    num_observations = 350000 # rgb image, occ grid, drone pose
     num_states = 0
     episode_length_s = 500 # timeout
     debug_vis = False

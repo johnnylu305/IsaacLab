@@ -96,6 +96,7 @@ class CartpoleEnv(DirectRLEnv):
             ),
             dim=-1,
         )
+        #print(obs.shape)
         observations = {"policy": obs}
         return observations
 

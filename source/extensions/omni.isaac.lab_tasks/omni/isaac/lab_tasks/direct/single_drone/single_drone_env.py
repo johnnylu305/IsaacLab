@@ -320,10 +320,11 @@ class QuadcopterEnv(DirectRLEnv):
         # TODO update these to rgb, occ, and drone pose
         obs = torch.cat(
             [
-                self.obv_pose_history,
+                self.obv_pose_history.reshape(self.cfg.num_envs, -1),
             ],
             dim=-1,
         )
+        
         observations = {"policy": obs}
 
         return observations
@@ -338,7 +339,7 @@ class QuadcopterEnv(DirectRLEnv):
             "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device),
         }
 
-        reward = torch.sum(torch.stack(list(rewards.values())), dim=0)
+        reward = torch.sum(torch.stack(list(rewards.values())), dim=0).reshape(-1)
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
