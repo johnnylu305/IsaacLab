@@ -306,6 +306,10 @@ class QuadcopterEnv(DirectRLEnv):
                                                          self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 0, 30)
         #print("grid shape", self.occupancy_grid.shape)
 
+        # pose: N, T, 7
+        # img: N, T', H, W, 3
+        # occ: N, grid_size, grid_size, grid_size, 7
+
         # TODO update these to rgb, occ, and drone pose
         obs = torch.cat(
             [
