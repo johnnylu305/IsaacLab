@@ -394,7 +394,7 @@ def create_blocks_from_occ_set(env_id, env_origin, occ_set, cell_size, slice_hei
     stage = omni.usd.get_context().get_stage()
     for (z, x, y) in occ_set:
         # Calculate position based on cell coordinates
-        cube_pos = Gf.Vec3f((x*cell_size)-env_size/2.+env_origin[0], (y*cell_size)-env_size/2.+env_origin[1], slice_height*z)
+        cube_pos = Gf.Vec3f((x*cell_size)-env_size/2.+env_origin[0], (y*cell_size)-env_size/2.+env_origin[1], slice_height*z+30)
 
         #cube_pos = Gf.Vec3f((x*cell_size), (y*cell_size), slice_height*z)
 

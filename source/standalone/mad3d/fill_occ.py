@@ -71,11 +71,10 @@ def find_occupied_voxels(grid):
     
     return occupied_voxels
 
-
 def fill_grid(path):
     hollow_occ = np.load(path)
     #print(hollow_occ.shape, np.sum(hollow_occ), hollow_occ[0, 0, 0])
-    #x_len, y_len, z_len = hollow_occ.shape
+    x_len, y_len, z_len = hollow_occ.shape
     assert hollow_occ[-1, -1, -1] == 0
     occ_set = find_occupied_voxels(hollow_occ)
     print(np.sum(hollow_occ), len(occ_set))
@@ -85,7 +84,53 @@ def fill_grid(path):
     # Save the occupied voxels to a file
     with open(output, 'wb') as file:
         pickle.dump(occ_set, file)
+    return occ_set, z_len, x_len, y_len
 
+def is_hollow(x, y, z, occ_grid, min_bound, max_bound):
+    # List of the 8 surrounding voxel coordinates
+    surrounding_voxels = [
+        (x-1, y-1, z-1), (x-1, y-1, z+1), (x-1, y+1, z-1), (x-1, y+1, z+1),
+        (x+1, y-1, z-1), (x+1, y-1, z+1), (x+1, y+1, z-1), (x+1, y+1, z+1)
+    ]
+    
+    # Check if all surrounding voxels are occupied and within bounds
+    for vx, vy, vz in surrounding_voxels:
+        if not (min_bound[0] <= vx <= max_bound[0] and
+                min_bound[1] <= vy <= max_bound[1] and
+                min_bound[2] <= vz <= max_bound[2]):
+            return False
+        if (vz, vx, vy) not in occ_grid:
+            return False
+    
+    return True
+
+def convert_to_hollow(occ_grid, min_bound, max_bound):
+    hollowed_grid = set()
+    
+    for voxel in occ_grid:
+        z, x, y = voxel
+        if not is_hollow(x, y, z, occ_grid, min_bound, max_bound):
+            hollowed_grid.add(voxel)
+    
+    return hollowed_grid
+
+def map_to_3d_grid(hollow_set, min_bound, max_bound, path):
+    # Calculate the dimensions of the grid
+    x_dim = max_bound[0] - min_bound[0] 
+    y_dim = max_bound[1] - min_bound[1] 
+    z_dim = max_bound[2] - min_bound[2] 
+    
+    # Initialize the grid with zeros
+    grid = np.zeros((z_dim, x_dim, y_dim), dtype=int)
+    
+    # Map the hollow set to the grid
+    for (z, x, y) in hollow_set:
+        grid[z - min_bound[0], x - min_bound[1], y - min_bound[2]] = 1
+
+    output = os.path.join(os.path.split(path)[0], "hollow_occ.npy")
+    np.save(output, grid)
+    print("hollow", np.sum(grid))
+    return grid
 
 def main():
     scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', 'occ.npy'), recursive=True))
@@ -93,7 +138,10 @@ def main():
     print(len(scenes_path))
 
     for scene_path in scenes_path:
-        fill_grid(scene_path)
+        occ_set, z_len, x_len, y_len = fill_grid(scene_path)
+        hollow_set = convert_to_hollow(occ_set, min_bound=[0, 0, 0], max_bound=[x_len, y_len, z_len])
+        map_to_3d_grid(hollow_set, [0, 0, 0], [x_len, y_len, z_len], scene_path)
+        #exit()
         #print(scene_path)
 
 if __name__=="__main__":

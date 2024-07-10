@@ -63,13 +63,15 @@ class QuadcopterEnv(DirectRLEnv):
 
     def __init__(self, cfg: QuadcopterEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
+        self.set_debug_vis(self.cfg.debug_vis)      
+
+    def _setup_scene(self):
+
 
         self.cfg.num_envs = self.num_envs
         
         self._actions = torch.zeros(self.num_envs, self.cfg.num_actions, device=self.device)
 
-        self.set_debug_vis(self.cfg.debug_vis)
-        
         # for pre-planned trajectory 
         self._index=-1
         radius = self.cfg.env_size/2.0 * 0.8 # Radius of the cylinder
@@ -118,8 +120,6 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.last_coverage_ratio = torch.zeros(self.cfg.num_envs, device=self.device).reshape(-1, 1)
 
-    def _setup_scene(self):
-
         # terrain
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -157,27 +157,45 @@ class QuadcopterEnv(DirectRLEnv):
         for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
             # Generate the path pattern for the glob function
             path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
-
             # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
             scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
-
+        scenes_path = scenes_path[:1]
+       
         self.cfg_list = []
         for scene_path in scenes_path:
             self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
-       
+        _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+                                                        env_ids=torch.arange(self.cfg.num_envs), my_asset_list=self.cfg_list)
+        env_ids = torch.arange(self.cfg.num_envs)
+        for i, scene in enumerate(scene_lists):
+            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+            occ_path = os.path.join(path, "fill_occ_set.pkl")
+            # To load the occupied voxels from the file
+            with open(occ_path, 'rb') as file:
+                self.occs[env_ids[i]] = pickle.load(file)      
+            
+            occ_path = os.path.join(path, "hollow_occ.npy")
+            self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
+
+        cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
+        slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters 
+        for i in range(len(env_ids)):
+            env_origin = self._terrain.env_origins[env_ids[i]].detach().cpu().numpy()
+            create_blocks_from_occ_set(env_ids[i], env_origin, self.occs[env_ids[i]], cell_size, slice_height, self.cfg.env_size)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         if self._index >= self.num_points-1:
             self._index = -1  # Reset index to loop the trajectory
         self._index += 1
 
-        self.env_step +=1
+        self.env_step += 1
 
         # action
         self._actions = actions.clone().clamp(-1.0, 1.0)
-        self._xyz = self._actions[:, :3]*self.cfg.env_size/2
-        self._yaw = self._actions[:,3]*torch.pi
-        self._pitch = (self._actions[:,4]+1)*torch.pi/4.
+        self._xyz = self._actions[:, :3] 
+        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * self.cfg.env_size / 2.0
+        self._yaw = torch.ones(self._actions[:, 3].shape).to(self.device)*torch.pi/3 #self._actions[:,3]*torch.pi
+        self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
 
     def _apply_action(self):
         if self.cfg.preplan:
@@ -216,7 +234,14 @@ class QuadcopterEnv(DirectRLEnv):
         drone_euler = torch.cat([torch.zeros(yaw.shape[0],1).to(self.device), pitch_radians.unsqueeze(1), yaw.unsqueeze(1)], dim=1).cpu()
         pitch_quat = torch.from_numpy(rot_utils.euler_angles_to_quats(drone_euler, degrees=False)).float()
         orientation_camera = convert_orientation_convention(pitch_quat, origin="world", target="ros")
-        self._camera.set_world_poses(root_state[:, :3]+torch.tensor(self.cfg.camera_offset).to(self.device), orientation_camera)
+        
+        x_new = root_state[:, 0] + self.cfg.camera_offset[0] * torch.cos(self._yaw) - self.cfg.camera_offset[1] * torch.sin(self._yaw)
+        y_new = root_state[:, 1] + self.cfg.camera_offset[0] * torch.sin(self._yaw) + self.cfg.camera_offset[1] * torch.cos(self._yaw)
+        z_new = root_state[:, 2] + self.cfg.camera_offset[2]
+
+        new_positions = torch.stack([x_new, y_new, z_new], dim=1)
+
+        self._camera.set_world_poses(new_positions, orientation_camera)
        
         # do not need this if decimation is large enough?
         # temporary solution for unsync bug between camera position and image
@@ -267,13 +292,14 @@ class QuadcopterEnv(DirectRLEnv):
         
         # collision detection
         for i in range(self.cfg.num_envs):
-            self.col[i] = check_building_collision(self.occs, self.robot_pos[i], i, org_x, org_y, org_z, 
+            self.col[i] = check_building_collision(self.occs, self.robot_pos[i].clone(), i, org_x, org_y, org_z, 
                                                    cell_size, slice_height, self._terrain.env_origins)
-
+       
         # robot pose
         for i in range(self.cfg.num_envs):
             self.obv_pose_history[i, self.env_step[i].int(), :3] = self.robot_pos[i] - self._terrain.env_origins[i]
             self.obv_pose_history[i, self.env_step[i].int(), 3:] = self.robot_ori[i]
+        #print(self.obv_pose_history)       
 
         # get camera intrinsic and extrinsic matrix
         intrinsic_matrix = self._camera.data.intrinsic_matrices.clone()
@@ -357,12 +383,16 @@ class QuadcopterEnv(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
-        num_match_occ = torch.sum(torch.logical_and(torch.where(self.obv_occ[:, :, :, :, 0]==2, 1, 0), self.gt_occs), dim=(1, 2, 3))
-        total_occ = torch.sum(self.gt_occs, dim=(1, 2, 3))
+        num_match_occ = torch.sum(torch.logical_and(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
+        total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
+        print("Cov", num_match_occ/total_occ)
+        print(torch.sum(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), dim=(1, 2, 3))/total_occ)
+
        
         rewards = {
             "coverage_ratio": ((num_match_occ/total_occ).reshape(-1, 1) - self.last_coverage_ratio) * self.cfg.occ_reward_scale,
             "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device) * self.cfg.col_reward_scale,
+            "test": (((num_match_occ/total_occ).reshape(-1, 1) - self.last_coverage_ratio) <= 1e-4).int() * -0.05
         }
         self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
 
@@ -418,29 +448,28 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
 
         # clear building
-        for env_id in env_ids:
-            delete_prim(f'/World/envs/env_{env_id}/Scene')
+        #for env_id in env_ids:
+        #    delete_prim(f'/World/envs/env_{env_id}/Scene')
 
         # reset occupancy grid
         grid_size = (self.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size)
-        # TODO only reset corresponding env
-        self.grid = OccupancyGrid(self.cfg.env_size, grid_size, self.cfg.decrement, self.cfg.increment, 
-                                  self.cfg.max_log_odds, self.cfg.min_log_odds, self.device)
-                                  
+        # only reset corresponding env
+        self.grid.grid[env_ids] = 0 
+        
         # add scene
-        _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
-                                                        env_ids=env_ids, my_asset_list=self.cfg_list)
+        #_, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+        #                                                env_ids=env_ids, my_asset_list=self.cfg_list)
 
         # load occ set and gt
-        for i, scene in enumerate(scene_lists):
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
-            occ_path = os.path.join(path, "fill_occ_set.pkl")
+        #for i, scene in enumerate(scene_lists):
+        #    path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+        #    occ_path = os.path.join(path, "fill_occ_set.pkl")
             # To load the occupied voxels from the file
-            with open(occ_path, 'rb') as file:
-                self.occs[env_ids[i]] = pickle.load(file)      
+        #    with open(occ_path, 'rb') as file:
+        #        self.occs[env_ids[i]] = pickle.load(file)      
             
-            occ_path = os.path.join(path, "occ.npy")
-            self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
+        #    occ_path = os.path.join(path, "occ.npy")
+        #    self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
            
        
         #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell

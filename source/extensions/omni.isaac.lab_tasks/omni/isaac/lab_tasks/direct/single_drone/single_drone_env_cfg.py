@@ -56,7 +56,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     grid_size = 20
     preplan = False
     save_img = True
-    vis_occ = False
+    vis_occ = True
     save_env_ids = [0, 1]
     save_img_freq = 10
 
@@ -71,7 +71,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # obv
     img_t = 2 
-    total_img = 50
+    total_img = 500 #50
 
     # occ grid
     decrement = 0.4
@@ -80,7 +80,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     min_log_odds = -3.5
 
     # sensor
-    camera_offset = [0.0, 0.0, -0.2]
+    # TODO FIX OFFSET
+    camera_offset = [0.5, 0.0, 0.0]
     camera_w, camera_h = 300, 300 # try 400 x 400 in the future
 
     # obv
@@ -90,8 +91,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     occ_observations = [grid_size, grid_size, grid_size, 4] # label + xyz
 
     # reward scales
-    occ_reward_scale = 1.0
-    col_reward_scale = -10
+    occ_reward_scale = 100.0
+    col_reward_scale = -1.0
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
@@ -133,10 +134,10 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         update_period=0, # update every physical step
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
-            #focal_length=1.38, # in cm
+            focal_length=13.8, # in cm default 24, dji 1.38
             #focus_distance=1.0, # in m 
-            #horizontal_aperture=24., # in mm 
-            clipping_range=(0.1, 20.0) # near and far plane in meter
+            horizontal_aperture=24., # in mm 
+            clipping_range=(0.5, 100.0) # near and far plane in meter
         ),
         width=camera_w,
         height=camera_h,
