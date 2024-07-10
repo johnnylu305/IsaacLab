@@ -80,7 +80,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     min_log_odds = -3.5
 
     # sensor
-    camera_offset = [0.0, 0.0, -0.2]
+    #camera_offset = [1.0, 0.0, -0.2]
+    camera_offset = [1.0, 0.0, 0.0]
     camera_w, camera_h = 300, 300 # try 400 x 400 in the future
 
     # obv
@@ -90,8 +91,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     occ_observations = [grid_size, grid_size, grid_size, 4] # label + xyz
 
     # reward scales
-    occ_reward_scale = 1.0
-    col_reward_scale = -10
+    occ_reward_scale = 10.0
+    col_reward_scale = -1
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
@@ -107,7 +108,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         ),
         gravity=(0.0, 0.0, 0.0), # disable gravity
         enable_scene_query_support=False, # disable collision query
-        render_interval=decimation
+        #render_interval=decimation
     )
 
     # ground	
@@ -137,7 +138,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
             #focal_length=1.38, # in cm
             #focus_distance=1.0, # in m 
             #horizontal_aperture=24., # in mm 
-            clipping_range=(0.1, 20.0) # near and far plane in meter
+            #clipping_range=(0.1, 20.0) # near and far plane in meter
+            clipping_range=(0.1, 30.0) # near and far plane in meter
         ),
         width=camera_w,
         height=camera_h,
