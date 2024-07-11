@@ -10,7 +10,7 @@ from omni.isaac.lab.scene import InteractiveSceneCfg
 from omni.isaac.lab.assets import ArticulationCfg
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
 from omni.isaac.lab.actuators import ImplicitActuatorCfg
-
+from omni.isaac.lab.sensors import TiledCamera, TiledCameraCfg
 
 CRAZYFLIE_CFG = ArticulationCfg(
     prim_path="/World/envs/env_.*/Robot",
@@ -71,7 +71,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # obv
     img_t = 2 
-    total_img = 50
+    total_img = 50000
 
     # occ grid
     decrement = 0.4
@@ -129,11 +129,27 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     robot: ArticulationCfg = CRAZYFLIE_CFG
 
     # sensor    
-    camera: CameraCfg = CameraCfg(
+    # camera: CameraCfg = CameraCfg(
+    #     prim_path="/World/envs/env_.*/Camera",
+    #     offset=CameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
+    #     update_period=0, # update every physical step
+    #     data_types=["rgb", "distance_to_image_plane"],
+    #     spawn=sim_utils.PinholeCameraCfg(
+    #         #focal_length=1.38, # in cm
+    #         #focus_distance=1.0, # in m 
+    #         #horizontal_aperture=24., # in mm 
+    #         #clipping_range=(0.1, 20.0) # near and far plane in meter
+    #         clipping_range=(0.1, 30.0) # near and far plane in meter
+    #     ),
+    #     width=camera_w,
+    #     height=camera_h,
+      
+    # )
+    camera: TiledCameraCfg = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",
-        offset=CameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
+        offset=TiledCameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
         update_period=0, # update every physical step
-        data_types=["rgb", "distance_to_image_plane"],
+        data_types=["rgb", "depth"],
         spawn=sim_utils.PinholeCameraCfg(
             #focal_length=1.38, # in cm
             #focus_distance=1.0, # in m 
@@ -145,7 +161,6 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         height=camera_h,
       
     )
-   
     # setup interactive scene for rl training
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=num_envs, 
                                                      env_spacing=env_spacing,

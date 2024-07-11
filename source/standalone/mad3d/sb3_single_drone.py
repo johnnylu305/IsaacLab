@@ -59,7 +59,7 @@ def main():
  
     # create agent from stable baselines
     agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
-
+    
     # train the agent
     agent.learn(total_timesteps=n_timesteps)
     
