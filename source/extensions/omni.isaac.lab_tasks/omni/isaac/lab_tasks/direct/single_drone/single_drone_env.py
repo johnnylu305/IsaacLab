@@ -57,6 +57,11 @@ import omni.isaac.core.utils.prims as prim_utils
 
 from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid
 import time
+from omni.isaac.lab.markers import VisualizationMarkers
+
+cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
+cfg.markers["hit"].radius = 0.002
+pc_markers = VisualizationMarkers(cfg)
 
 class QuadcopterEnv(DirectRLEnv):
     cfg: QuadcopterEnvCfg
@@ -136,7 +141,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         # sensor
-        self._camera = Camera(self.cfg.camera)
+        #self._camera = Camera(self.cfg.camera)
+        self._camera = TiledCamera(self.cfg.camera)
         self.scene.sensors["camera"] = self._camera
         
         self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
@@ -245,6 +251,8 @@ class QuadcopterEnv(DirectRLEnv):
         root_state = torch.ones((self.num_envs, 13)).to(self.device) * 0
         root_state[:, :3] = target_position
         root_state[:,3:7] = target_orientation
+        self.target_orientation = target_orientation
+        self.target_position = target_position
         root_state[:, :3] += self._terrain.env_origins[env_ids]
         self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
         self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
@@ -256,11 +264,14 @@ class QuadcopterEnv(DirectRLEnv):
         x_new = root_state[:, 0] + self.cfg.camera_offset[0] * torch.cos(self._yaw) - self.cfg.camera_offset[1] * torch.sin(self._yaw)
         y_new = root_state[:, 1] + self.cfg.camera_offset[0] * torch.sin(self._yaw) + self.cfg.camera_offset[1] * torch.cos(self._yaw)
         z_new = root_state[:, 2] + self.cfg.camera_offset[2]
-
+ 
         new_positions = torch.stack([x_new, y_new, z_new], dim=1)
 
         self._camera.set_world_poses(new_positions, orientation_camera)
-       
+        self.sim.step()
+        self.scene.update(dt=0)
+        self._camera.update(dt=0)
+ 
         # do not need this if decimation is large enough?
         # temporary solution for unsync bug between camera position and image
         #for i in range(3):
@@ -293,10 +304,39 @@ class QuadcopterEnv(DirectRLEnv):
             self.single_observation_space["critic"] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_states,))
             self.state_space = gym.vector.utils.batch_space(self.single_observation_space["critic"], self.num_envs)
 
+    def dis_to_z(self, dist_images, intrinsic_matrix):
+        # Extract parameters from the intrinsic matrix
+        f_x = intrinsic_matrix[:, 0, 0]  # Focal length in x
+        f_y = intrinsic_matrix[:, 1, 1]  # Focal length in y
+        c_x = intrinsic_matrix[:, 0, 2]  # Principal point x
+        c_y = intrinsic_matrix[:, 1, 2]  # Principal point y
+        print(intrinsic_matrix.shape)
+        # Determine the number of images, height, and width
+        n, img_height, img_width = dist_images.shape
+    
+        # Create arrays representing the x and y coordinates of each pixel
+        y_indices, x_indices = torch.meshgrid(torch.arange(img_height), torch.arange(img_width), indexing='ij')
+        y_indices, x_indices = y_indices.cuda(), x_indices.cuda()
+        print(x_indices.shape, c_x.shape)
+        x_indices = x_indices[None, :, :] - c_x[:, None, None]
+        y_indices = y_indices[None, :, :] - c_y[:, None, None]
+    
+        # Calculate the distance from each pixel to the principal point in the image plane
+        d = torch.sqrt(x_indices**2 + y_indices**2 + f_x[:, None, None]**2)
+        print("d", d.shape)
+        # d has shape (h, w), make it (1, h, w) to broadcast along batch size
+        #d = d[None, :, :]
+    
+        # Calculate Z-component using the cosine of the angle
+        depth_images = dist_images * (f_x[:, None, None] / d)
+    
+        return depth_images
+
     def _get_observations(self) -> dict:
         start_time = time.perf_counter()
         # get images
-        depth_image = self._camera.data.output["distance_to_image_plane"].clone()
+        #depth_image = self._camera.data.output["distance_to_image_plane"].clone()
+        depth_image = self._camera.data.output["depth"][:,:,:,0].clone()
         rgb_image = self._camera.data.output["rgb"].clone()
         for i in range(self.cfg.num_envs):
             self.obv_imgs[i][self.env_step[i].int()%self.cfg.img_t] = rgb_image[i][:, :, :3]
@@ -320,10 +360,19 @@ class QuadcopterEnv(DirectRLEnv):
         #print(self.obv_pose_history)       
 
         # get camera intrinsic and extrinsic matrix
+        
         intrinsic_matrix = self._camera.data.intrinsic_matrices.clone()
         camera_pos = self._camera.data.pos_w.clone()
         camera_quat = self._camera.data.quat_w_ros.clone()
-        
+        #print(camera_pos)
+        #print(camera_quat)
+        #try:
+        #    camera_pos = self.robot_pos.cuda().float()
+        #    camera_quat = self.target_orientation.cuda().float()
+        #    print(camera_pos)
+        #    print(camera_quat)
+        #except:
+        #    pass
         # save images
         if self.cfg.save_img:
             for i in self.cfg.save_env_ids:
@@ -339,6 +388,7 @@ class QuadcopterEnv(DirectRLEnv):
                 plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}.png'),
                            rgb_image[i].detach().cpu().numpy().astype(np.uint8))
         
+        depth_image = self.dis_to_z(depth_image, intrinsic_matrix)
         # prevent inf
         depth_image = torch.clamp(depth_image, 0, self.cfg.env_size*2)
         # make log odd occupancy grid
@@ -388,7 +438,8 @@ class QuadcopterEnv(DirectRLEnv):
         # pose: N, T, 7
         # img: N, T', H, W, 3
         # occ: N, grid_size, grid_size, grid_size, 4
-
+        #if points_3d_world.size()[0] > 0:
+        #    pc_markers.visualize(translations=points_3d_world[0])
         # TODO update these to rgb, occ, and drone pose
         obs = {"pose": self.obv_pose_history.reshape(self.cfg.num_envs, -1),
                "img": self.obv_imgs.permute(0, 1, 4, 2, 3).reshape(-1, 3 * self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w),
@@ -423,7 +474,8 @@ class QuadcopterEnv(DirectRLEnv):
         #done = self.coverage_ratio_reward.squeeze() >0.9
         died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
        
-
+        #died = False
+        #time_out = False
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -440,19 +492,21 @@ class QuadcopterEnv(DirectRLEnv):
         self.env_step[env_ids] = 0
 
         # reset imgs obv
-        for i in env_ids:
-            self.obv_imgs[i] = torch.zeros((self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w, 3)).to(self.device)
-        
+        #for i in env_ids:
+        #    self.obv_imgs[i] = torch.zeros((self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w, 3)).to(self.device)
+        self.obv_imgs[env_ids] = torch.zeros((self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w, 3)).to(self.device)
         # reset pose obv
-        for i in env_ids:
-            self.obv_pose_history[i] = torch.zeros(self.cfg.total_img, 5).to(self.device)
-
+        #for i in env_ids:
+        #    self.obv_pose_history[i] = torch.zeros(self.cfg.total_img, 5).to(self.device)
+        self.obv_pose_history[env_ids] = torch.zeros(self.cfg.total_img, 5).to(self.device)
         # reset occ obv
-        for i in env_ids:
-            self.obv_occ[i, :, :, :, 0] = 1
+        #for i in env_ids:
+        #    self.obv_occ[i, :, :, :, 0] = 1
+        self.obv_occ[env_ids, :, :, :, 0] = 1
 
-        for i in env_ids:
-            self.last_coverage_ratio[i] = 0
+        #for i in env_ids:
+        #    self.last_coverage_ratio[i] = 0
+        self.last_coverage_ratio[env_ids] = 0
         
         self._actions[env_ids] = 0.0
         # Reset robot state
