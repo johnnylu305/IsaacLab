@@ -56,12 +56,12 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     grid_size = 20
     preplan = False
     save_img = True
-    vis_occ = True
+    vis_occ = False
     save_env_ids = [0, 1]
     save_img_freq = 10
 
     num_envs = 2 # this might be overwrote by parser
-    env_spacing = 30 # in meter, 2 cells is one unit
+    env_spacing = 60 #30 # in meter, 2 cells is one unit
 
     decimation = 5 # _apply_action will run decimation time
     num_actions = 5 # x, y, z, yaw, pitch

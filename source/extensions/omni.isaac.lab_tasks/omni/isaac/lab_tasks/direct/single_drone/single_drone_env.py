@@ -124,6 +124,8 @@ class QuadcopterEnv(DirectRLEnv):
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
+        rescale_scene(scene_prim_root="/World/ground/Environment", max_len=8e4)
+ 
 
         # prevent mirror
         self.scene.clone_environments(copy_from_source=True)
@@ -173,15 +175,27 @@ class QuadcopterEnv(DirectRLEnv):
             # To load the occupied voxels from the file
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)      
-            
-            occ_path = os.path.join(path, "hollow_occ.npy")
-            self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
+
+        for i, scene in enumerate(scene_lists):
+            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
+            occ_path = os.path.join(path, "occ.npy")
+            self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
+        
+        temp = set()
+        for x in range(self.cfg.grid_size):
+            for y in range(self.cfg.grid_size):
+                for z in range(self.cfg.grid_size):
+                    if self.gt_occs[0][x, y, z]==1:
+                        temp.add((z, x, y))
+                         
 
         cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
         slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters 
         for i in range(len(env_ids)):
             env_origin = self._terrain.env_origins[env_ids[i]].detach().cpu().numpy()
-            create_blocks_from_occ_set(env_ids[i], env_origin, self.occs[env_ids[i]], cell_size, slice_height, self.cfg.env_size)
+            #create_blocks_from_occ_set(env_ids[i], env_origin, self.occs[env_ids[i]], cell_size, slice_height, self.cfg.env_size)
+
+        create_blocks_from_occ_set(0, env_origin, temp, cell_size, slice_height, self.cfg.env_size)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         if self._index >= self.num_points-1:
@@ -356,7 +370,7 @@ class QuadcopterEnv(DirectRLEnv):
             self.probability_grid = self.grid.log_odds_to_prob(self.grid.grid)
             # N, x_size, y_size, z_size
             # 0: free, 1: unknown, 2: occupied
-            self.obv_occ[:, :, :, :, 0] = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.7, 1, 2))
+            self.obv_occ[:, :, :, :, 0] = torch.where(self.probability_grid <= 0.3, 0, torch.where(self.probability_grid <= 0.6, 1, 2))
 
             if self.cfg.vis_occ:
                 for j in range(self.obv_occ.shape[0]):
@@ -392,7 +406,7 @@ class QuadcopterEnv(DirectRLEnv):
         rewards = {
             "coverage_ratio": ((num_match_occ/total_occ).reshape(-1, 1) - self.last_coverage_ratio) * self.cfg.occ_reward_scale,
             "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device) * self.cfg.col_reward_scale,
-            "test": (((num_match_occ/total_occ).reshape(-1, 1) - self.last_coverage_ratio) <= 1e-4).int() * -0.05
+            "test": (((num_match_occ/total_occ).reshape(-1, 1) - self.last_coverage_ratio) <= 1e-4).int() * -0.001
         }
         self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
 
