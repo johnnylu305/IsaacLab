@@ -215,9 +215,10 @@ class QuadcopterEnv(DirectRLEnv):
 
         # action
         self._actions = actions.clone().clamp(-1.0, 1.0)
-        self._xyz = self._actions[:, :3] 
+        self._xyz = self._actions[:, :3]
         self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * self.cfg.env_size / 2.0
-        self._yaw = torch.ones(self._actions[:, 3].shape).to(self.device)*torch.pi/3 #self._actions[:,3]*torch.pi
+        self._yaw = self._actions[:,3]*torch.pi
+        #self._pitch = (self._actions[:,4]+1)*torch.pi/4.
         self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
 
     def _apply_action(self):
@@ -260,13 +261,14 @@ class QuadcopterEnv(DirectRLEnv):
         drone_euler = torch.cat([torch.zeros(yaw.shape[0],1).to(self.device), pitch_radians.unsqueeze(1), yaw.unsqueeze(1)], dim=1).cpu()
         pitch_quat = torch.from_numpy(rot_utils.euler_angles_to_quats(drone_euler, degrees=False)).float()
         orientation_camera = convert_orientation_convention(pitch_quat, origin="world", target="ros")
-        
+        #self._camera.set_world_poses(root_state[:, :3]+torch.tensor(np.dot(self.cfg.camera_offset,rotation_matrix)).to(self.device), orientation_camera)
+
         x_new = root_state[:, 0] + self.cfg.camera_offset[0] * torch.cos(self._yaw) - self.cfg.camera_offset[1] * torch.sin(self._yaw)
         y_new = root_state[:, 1] + self.cfg.camera_offset[0] * torch.sin(self._yaw) + self.cfg.camera_offset[1] * torch.cos(self._yaw)
         z_new = root_state[:, 2] + self.cfg.camera_offset[2]
  
         new_positions = torch.stack([x_new, y_new, z_new], dim=1)
-
+ 
         self._camera.set_world_poses(new_positions, orientation_camera)
         self.sim.step()
         self.scene.update(dt=0)
