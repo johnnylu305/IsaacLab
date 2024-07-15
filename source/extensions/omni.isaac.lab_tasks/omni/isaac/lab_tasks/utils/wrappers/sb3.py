@@ -326,7 +326,7 @@ class Sb3VecEnvWrapper(VecEnv):
                     # only log this data for episodes that are terminated
                     if infos[idx]["episode"] is not None:
                         for sub_key, sub_value in value.items():
-                            infos[idx]["episode"][sub_key] = sub_value
+                            infos[idx]["episode"][sub_key] = sub_value[idx]
                 else:
                     infos[idx][key] = value[idx]
             # add information about terminal observation separately

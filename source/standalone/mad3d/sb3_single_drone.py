@@ -29,12 +29,48 @@ simulation_app = app_launcher.app
 
 import gymnasium as gym
 import torch
+import os
+from datetime import datetime
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
+from stable_baselines3.common.logger import configure
+from omni.isaac.lab.utils.io import dump_pickle, dump_yaml
+
 
 import omni.isaac.lab_tasks  # noqa: F401
 from omni.isaac.lab_tasks.utils import parse_env_cfg, load_cfg_from_registry
 from omni.isaac.lab_tasks.utils.wrappers.sb3 import Sb3VecEnvWrapper, process_sb3_cfg
 from sb3_encoder import CustomCombinedExtractor
+
+class RewardLoggingCallback(BaseCallback):
+    def __init__(self, verbose=0):
+        super(RewardLoggingCallback, self).__init__(verbose)
+    
+    def _on_step(self) -> bool:
+        # this is for step reward
+        #info = self.locals.get("infos")
+        return True
+       
+    def _on_rollout_end(self) -> None:
+        infos = self.locals.get("infos")
+        for i, info in enumerate(infos):
+            episode_info = info['episode']
+            if episode_info:
+                for key, value in episode_info.items():
+                    if "Episode Reward" in key:
+                        #print(i, key, value)
+                        self.logger.record(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item())
+        
+    def _on_training_end(self) -> None:
+        infos = self.locals.get("infos")
+        for i, info in enumerate(infos):
+            episode_info = info['episode']
+            if episode_info:
+                for key, value in episode_info.items():
+                    if "Episode Reward" in key:
+                        #print(i, key, value)
+                        self.logger.record(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item())
+               
 
 def main():
     """Random actions agent with Isaac Lab environment."""
@@ -44,6 +80,14 @@ def main():
     )
 
     agent_cfg = load_cfg_from_registry(args_cli.task, "sb3_cfg_entry_point")
+
+    # directory for logging into
+    log_dir = os.path.join("logs", "sb3", args_cli.task, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    # dump the configuration into log-directory
+    dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
+    dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
+    dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
+    dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
 
     # post-process agent configuration
     agent_cfg = process_sb3_cfg(agent_cfg)
@@ -59,9 +103,22 @@ def main():
  
     # create agent from stable baselines
     agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
+
+    # configure the logger
+    new_logger = configure(log_dir, ["stdout", "tensorboard"])
+    agent.set_logger(new_logger)
+
+    # callbacks for agent
+    checkpoint_callback = CheckpointCallback(save_freq=1000, save_path=log_dir, name_prefix="model", verbose=2)
     
+    # Instantiate the callback
+    reward_logging_callback = RewardLoggingCallback(verbose=1)
+
     # train the agent
-    agent.learn(total_timesteps=n_timesteps)
+    agent.learn(total_timesteps=n_timesteps, callback=[checkpoint_callback, reward_logging_callback])
+
+    # save the final model
+    agent.save(os.path.join(log_dir, "model"))
     
     # close the simulator
     env.close()

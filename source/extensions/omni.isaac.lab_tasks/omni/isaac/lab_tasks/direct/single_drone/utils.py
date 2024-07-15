@@ -455,3 +455,7 @@ def create_blocks_from_occ_list(env_id, env_origin, occ_set, cell_size, slice_he
                 # If no translate op found, add it
                 xform.AddTranslateOp().Set(cube_pos)
 
+def extract_foreground(p3d_world, floor_z, h, w, bound_mask):
+    # N, H*W, 3
+    mask = torch.logical_and(((torch.abs(p3d_world[:, 2]) - floor_z) > 0.1), bound_mask).int().reshape(-1, h, w).transpose(1, 2)
+    return mask

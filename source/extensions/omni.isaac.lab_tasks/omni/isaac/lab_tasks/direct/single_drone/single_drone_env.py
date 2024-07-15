@@ -55,7 +55,7 @@ from omni.physx import get_physx_scene_query_interface
 from omni.isaac.core.articulations import ArticulationView
 import omni.isaac.core.utils.prims as prim_utils
 
-from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z
+from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground
 import time
 from omni.isaac.lab.markers import VisualizationMarkers
 
@@ -68,7 +68,19 @@ class QuadcopterEnv(DirectRLEnv):
 
     def __init__(self, cfg: QuadcopterEnvCfg, render_mode: str | None = None, **kwargs):
         super().__init__(cfg, render_mode, **kwargs)
-        self.set_debug_vis(self.cfg.debug_vis)      
+        self.set_debug_vis(self.cfg.debug_vis)
+
+        # Logging
+        self._episode_sums = {
+            key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            for key in [
+                "coverage_ratio",
+                "collision",
+                "more",
+                "goal",
+                "fg"
+            ]
+        }
 
     def _setup_scene(self):
 
@@ -189,6 +201,8 @@ class QuadcopterEnv(DirectRLEnv):
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
             occ_path = os.path.join(path, "occ.npy")
             self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
+
+        self.fg_masks = torch.zeros((self.cfg.num_envs, self.cfg.camera_h, self.cfg.camera_w)).to(self.device)
         
         # for visualization
         #temp = set()
@@ -307,7 +321,7 @@ class QuadcopterEnv(DirectRLEnv):
             self.single_observation_space["critic"] = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_states,))
             self.state_space = gym.vector.utils.batch_space(self.single_observation_space["critic"], self.num_envs)
 
-    def _get_observations(self) -> dic:
+    def update_observations(self):
         # get images
         depth_image = self._camera.data.output["distance_to_image_plane"].clone()
         #depth_image = self._camera.data.output["depth"][:,:,:,0].clone()
@@ -350,7 +364,7 @@ class QuadcopterEnv(DirectRLEnv):
                     continue
                 root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
-                print(f"save {i}_rgb_{self.env_step[i].long()}.png")
+                #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}.png'),
                            np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
                            cmap='gray')
@@ -363,6 +377,8 @@ class QuadcopterEnv(DirectRLEnv):
         # make log odd occupancy grid
         points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
         points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
+                        
+
         # vis end points
         #create_blocks_from_occ_list(0, self._terrain.env_origins[0].detach().cpu().numpy(), points_3d_world[0].detach().cpu().numpy(), cell_size, slice_height, self.cfg.env_size)
        
@@ -382,6 +398,24 @@ class QuadcopterEnv(DirectRLEnv):
                 self.grid.update_log_odds(i,
                                           torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio),
                                           occupied=True)
+                self.fg_masks[i] = extract_foreground(points_3d_world[i], 0, self.cfg.camera_h, self.cfg.camera_w, mask)
+            else:
+                self.fg_masks[i] = 0
+ 
+
+        # save images
+        if self.cfg.save_img:
+            for i in self.cfg.save_env_ids:
+                if i >= self.num_envs:
+                    break
+                if self.env_episode[i]%self.cfg.save_img_freq != 0:
+                    continue
+                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                os.makedirs(root_path, exist_ok=True)
+                plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
+                           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
+                           cmap='gray')
+
         # Iterate over each slice
         org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
         org_z = 0
@@ -403,7 +437,8 @@ class QuadcopterEnv(DirectRLEnv):
                         # vis free
                         #create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
                         #                             self.obv_occ[j, :, :, i, 0].cpu().numpy(), cell_size, i*slice_height, i, self.cfg.env_size, 0, 30)
-        
+
+    def _get_observations(self) -> dic:       
         # pose: N, T, 7
         # img: N, T', H, W, 3
         # occ: N, grid_size, grid_size, grid_size, 4
@@ -420,27 +455,39 @@ class QuadcopterEnv(DirectRLEnv):
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
+        # update observation first because _get_rewards is after _get_observations
+        self.update_observations()
+
         num_match_occ = torch.sum(torch.logical_and(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
-        print("Cov", num_match_occ/total_occ)
-        print(torch.sum(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), dim=(1, 2, 3))/total_occ)
+        #print("Cov", num_match_occ/total_occ, self.last_coverage_ratio)
+        #print(torch.sum(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), dim=(1, 2, 3))/total_occ)
         self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
-       
+      
+        fg_ratio = torch.sum(self.fg_masks, dim=(1, 2)).reshape(-1, 1)/(self.cfg.camera_w*self.cfg.camera_h) 
+        
+ 
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale,
             "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device) * self.cfg.col_reward_scale,
             "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.001 * self.env_step.to(self.device).reshape(-1, 1),
-            "goal": (self.coverage_ratio_reward >= 0.99) * 20.
+            "goal": (self.coverage_ratio_reward >= 0.99) * 20.,
+            #"fg": torch.logical_or(fg_ratio>0.6, fg_ratio<0.4) * torch.abs(fg_ratio-0.5) * -0.1
+            "fg": (fg_ratio<0.3).int() * torch.abs(fg_ratio-0.5) * -1 #-0.1
         }
         #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
         #print(rewards)
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0).reshape(-1)
+
+        # Logging
+        for key, value in rewards.items():
+            self._episode_sums[key] += value.squeeze(1)
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         time_out = self.episode_length_buf >= self.max_episode_length-1
        
-        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img, self.coverage_ratio_reward.squeeze() > 0.99)
+        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= 0.99)
         died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
  
         return died, time_out
@@ -455,6 +502,18 @@ class QuadcopterEnv(DirectRLEnv):
             # Spread out the resets to avoid spikes in training when many environments reset at a similar time
             self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
 
+
+        # Logging
+        extras = dict()
+        for key in self._episode_sums.keys():
+            #print(self._episode_sums[key])
+            #print(self.env_step.to(self.device))
+            #print("ccccccccccccccccccccc")
+            extras["Episode Reward/" + key] = self._episode_sums[key] / self.env_step.to(self.device)
+            self._episode_sums[key][env_ids] = 0.0
+        self.extras["log"] = dict()
+        self.extras["log"].update(extras)
+
         # reset step
         self.env_step[env_ids] = 0
 
@@ -466,6 +525,8 @@ class QuadcopterEnv(DirectRLEnv):
         self.obv_occ[env_ids, :, :, :, 0] = 1
 
         self.last_coverage_ratio[env_ids] = 0
+
+        self.fg_masks[env_ids] = 0
         
         self._actions[env_ids] = 0.0
         # Reset robot state
