@@ -81,7 +81,8 @@ class QuadcopterEnv(DirectRLEnv):
                 "more",
                 "goal",
                 "fg",
-                "status coverage_ratio"
+                "status coverage_ratio",
+                "sub_goal"
             ]
         }
 
@@ -140,6 +141,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.last_coverage_ratio = torch.zeros(self.cfg.num_envs, device=self.device).reshape(-1, 1)
         self.coverage_ratio_reward = torch.zeros(self.cfg.num_envs,  device=self.device).reshape(-1, 1)
+        self.sub_goal = torch.zeros(self.cfg.num_envs,  device=self.device).reshape(-1, 1)
 
         # terrain
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
@@ -478,7 +480,7 @@ class QuadcopterEnv(DirectRLEnv):
 
     def _get_rewards(self) -> torch.Tensor:
         # update observation first because _get_rewards is after _get_observations
-        self.update_observations()
+        #self.update_observations()
 
         num_match_occ = torch.sum(torch.logical_and(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
@@ -487,15 +489,16 @@ class QuadcopterEnv(DirectRLEnv):
         self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
       
         fg_ratio = torch.sum(self.fg_masks, dim=(1, 2)).reshape(-1, 1)/(self.cfg.camera_w*self.cfg.camera_h) 
-        
+        sub_goal_reward = torch.logical_and(self.coverage_ratio_reward>=0.9, self.sub_goal==0)
+        self.sub_goal[sub_goal_reward] = 1.
  
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale,
             "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device) * self.cfg.col_reward_scale,
-            "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.01 * self.env_step.to(self.device).reshape(-1, 1),
-            "goal": (self.coverage_ratio_reward >= 0.99).int() * 50.,
-            #"fg": torch.logical_or(fg_ratio>0.6, fg_ratio<0.4) * torch.abs(fg_ratio-0.5) * -0.1
-            "fg": (fg_ratio<0.3).int() * torch.abs(fg_ratio-0.5) * -0.1
+            "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1),
+            "goal": (self.coverage_ratio_reward >= 0.98).int() * 50.,
+            "fg": (fg_ratio<0.3).int() * torch.abs(fg_ratio-0.5) * -0.05,
+            "sub_goal": sub_goal_reward.int() * 5.
         }
         #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
         #print(rewards)
@@ -508,6 +511,8 @@ class QuadcopterEnv(DirectRLEnv):
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
+        # update observation here because _get_dones is the first call after _apply_action
+        self.update_observations()
         time_out = self.episode_length_buf >= self.max_episode_length-1
        
         done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= 0.99)
@@ -552,7 +557,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.obv_occ[env_ids, :, :, :, 0] = 1
 
         self.last_coverage_ratio[env_ids] = 0
-
+        self.sub_goal[env_ids] = 0
         self.fg_masks[env_ids] = 0
         
         self._actions[env_ids] = 0.0

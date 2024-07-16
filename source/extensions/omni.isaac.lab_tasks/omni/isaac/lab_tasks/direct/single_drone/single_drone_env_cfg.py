@@ -92,8 +92,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     occ_observations = [grid_size, grid_size, grid_size, 4] # label + xyz
 
     # reward scales
-    occ_reward_scale = 1.0
-    col_reward_scale = -5.0 #-10.0
+    occ_reward_scale = 3.0
+    col_reward_scale = -10.0
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
