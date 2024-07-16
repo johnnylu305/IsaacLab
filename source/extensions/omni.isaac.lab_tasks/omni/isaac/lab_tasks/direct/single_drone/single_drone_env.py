@@ -80,7 +80,8 @@ class QuadcopterEnv(DirectRLEnv):
                 "collision",
                 "more",
                 "goal",
-                "fg"
+                "fg",
+                "status coverage_ratio"
             ]
         }
 
@@ -491,10 +492,10 @@ class QuadcopterEnv(DirectRLEnv):
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale,
             "collision": torch.tensor(self.col).float().reshape(-1, 1).to(self.device) * self.cfg.col_reward_scale,
-            "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.001 * self.env_step.to(self.device).reshape(-1, 1),
-            "goal": (self.coverage_ratio_reward >= 0.99) * 20.,
+            "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.01 * self.env_step.to(self.device).reshape(-1, 1),
+            "goal": (self.coverage_ratio_reward >= 0.99).int() * 50.,
             #"fg": torch.logical_or(fg_ratio>0.6, fg_ratio<0.4) * torch.abs(fg_ratio-0.5) * -0.1
-            "fg": (fg_ratio<0.3).int() * torch.abs(fg_ratio-0.5) * -1 #-0.1
+            "fg": (fg_ratio<0.3).int() * torch.abs(fg_ratio-0.5) * -0.1
         }
         #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
         #print(rewards)
@@ -503,6 +504,7 @@ class QuadcopterEnv(DirectRLEnv):
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value.squeeze(1)
+        self._episode_sums["status coverage_ratio"] = num_match_occ/total_occ
         return reward
 
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -531,8 +533,11 @@ class QuadcopterEnv(DirectRLEnv):
             #print(self._episode_sums[key])
             #print(self.env_step.to(self.device))
             #print("ccccccccccccccccccccc")
-            extras["Episode Reward/" + key] = self._episode_sums[key] / self.env_step.to(self.device)
-            self._episode_sums[key][env_ids] = 0.0
+            if "status" not in key:
+                extras["Episode Reward/" + key] = self._episode_sums[key] / self.env_step.to(self.device)
+                self._episode_sums[key][env_ids] = 0.0
+        extras["Episode Reward/status coverage_ratio"] = self._episode_sums["status coverage_ratio"]
+        self._episode_sums["status coverage_ratio"] = 0.0
         self.extras["log"] = dict()
         self.extras["log"].update(extras)
 
@@ -640,4 +645,6 @@ class QuadcopterEnv(DirectRLEnv):
         for i in range(5):
             self.sim.step()
             self.scene.update(dt=0)
+
+        self.update_observations()
 

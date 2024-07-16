@@ -93,7 +93,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # reward scales
     occ_reward_scale = 1.0
-    col_reward_scale = -10.0
+    col_reward_scale = -5.0 #-10.0
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
