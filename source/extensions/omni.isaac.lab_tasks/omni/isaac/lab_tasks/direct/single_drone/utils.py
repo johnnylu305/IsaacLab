@@ -3,7 +3,25 @@ import numpy as np
 import omni
 from omni.isaac.core.utils.prims import get_prim_at_path
 from pxr import UsdGeom, Usd, Gf, Sdf
+import open3d as o3d
 
+def merge_point_clouds(pc1, pc2):
+    if np.asarray(pc1.points).shape[0] == 0:
+        return pc2
+    # Merge points
+    merged_points = np.vstack((np.asarray(pc1.points), np.asarray(pc2.points)))
+    
+    # Initialize a new point cloud object for the merged cloud
+    merged_cloud = o3d.geometry.PointCloud()
+    merged_cloud.points = o3d.utility.Vector3dVector(merged_points)
+    
+    # Check if both point clouds have colors
+    if pc1.colors and pc2.colors:
+        # Merge colors
+        merged_colors = np.vstack((np.asarray(pc1.colors), np.asarray(pc2.colors)))
+        merged_cloud.colors = o3d.utility.Vector3dVector(merged_colors)
+
+    return merged_cloud
 
 def _bresenhamline_nslope(slope, device):
     """

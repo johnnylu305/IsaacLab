@@ -57,6 +57,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     preplan = False
     save_img = True
     vis_occ = False
+    vis_pointcloud = False
     save_env_ids = [0, 1]
     save_img_freq = 10
 

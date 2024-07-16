@@ -58,6 +58,8 @@ import omni.isaac.core.utils.prims as prim_utils
 from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground
 import time
 from omni.isaac.lab.markers import VisualizationMarkers
+import open3d as o3d 
+from .utils import merge_point_clouds
 
 cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
 cfg.markers["hit"].radius = 0.002
@@ -203,7 +205,7 @@ class QuadcopterEnv(DirectRLEnv):
             self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
 
         self.fg_masks = torch.zeros((self.cfg.num_envs, self.cfg.camera_h, self.cfg.camera_w)).to(self.device)
-        
+        self.point_cloud = o3d.geometry.PointCloud()
         # for visualization
         #temp = set()
         #for x in range(self.cfg.grid_size):
@@ -377,8 +379,27 @@ class QuadcopterEnv(DirectRLEnv):
         # make log odd occupancy grid
         points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
         points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
-                        
+        
+        if self.cfg.vis_pointcloud:
+            colors = rgb_image[0,:,:,:-1].transpose(0,1).detach().cpu().numpy().reshape(-1, 3) / 255.0  # Normalize color values
+                            
+            # Create a point cloud object from the points
+            point_cloud = o3d.geometry.PointCloud()
+            points = points_3d_world[0].detach().cpu().numpy()
+            mask_x = (points_3d_world[0,:, 0]-self._terrain.env_origins[0][0]).abs() < self.cfg.env_size/2 - 1e-3
+            mask_y = (points_3d_world[0,:, 1]-self._terrain.env_origins[0][1]).abs() < self.cfg.env_size/2 - 1e-3
+            mask_z = (points_3d_world[0,:, 2] < self.cfg.env_size - 1e-3) & (points_3d_world[0,:, 2] >=0) 
 
+            # Combine masks to keep rows where both xyz are within the range
+            mask = mask_x & mask_y & mask_z
+            filtered_points = points[mask.cpu().numpy()]
+            filtered_colors = colors[mask.cpu().numpy()]
+
+            point_cloud.points = o3d.utility.Vector3dVector(filtered_points)
+            point_cloud.colors = o3d.utility.Vector3dVector(filtered_colors)
+            # Visualize the point cloud
+            self.point_cloud = merge_point_clouds(self.point_cloud, point_cloud)
+            o3d.visualization.draw_geometries([self.point_cloud])
         # vis end points
         #create_blocks_from_occ_list(0, self._terrain.env_origins[0].detach().cpu().numpy(), points_3d_world[0].detach().cpu().numpy(), cell_size, slice_height, self.cfg.env_size)
        
@@ -493,6 +514,7 @@ class QuadcopterEnv(DirectRLEnv):
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
+        self.point_cloud = o3d.geometry.PointCloud()
         if env_ids is None or len(env_ids) == self.num_envs:
             env_ids = self._robot._ALL_INDICES
 
