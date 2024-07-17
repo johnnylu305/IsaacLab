@@ -541,8 +541,8 @@ class QuadcopterEnv(DirectRLEnv):
             if "status" not in key:
                 extras["Episode Reward/" + key] = self._episode_sums[key] / self.env_step.to(self.device)
                 self._episode_sums[key][env_ids] = 0.0
-        extras["Episode Reward/status coverage_ratio"] = self._episode_sums["status coverage_ratio"]
-        self._episode_sums["status coverage_ratio"] = 0.0
+        extras["Episode Reward/status coverage_ratio"] = self._episode_sums["status coverage_ratio"].clone()
+        self._episode_sums["status coverage_ratio"][env_ids] = 0.0
         self.extras["log"] = dict()
         self.extras["log"].update(extras)
 

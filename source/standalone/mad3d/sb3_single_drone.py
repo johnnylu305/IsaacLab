@@ -30,6 +30,7 @@ simulation_app = app_launcher.app
 import gymnasium as gym
 import torch
 import os
+from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
@@ -43,34 +44,26 @@ from omni.isaac.lab_tasks.utils.wrappers.sb3 import Sb3VecEnvWrapper, process_sb
 from sb3_encoder import CustomCombinedExtractor
 
 class RewardLoggingCallback(BaseCallback):
-    def __init__(self, verbose=0):
+    def __init__(self, log_dir, verbose=0):
         super(RewardLoggingCallback, self).__init__(verbose)
-    
+        self.writer = SummaryWriter(log_dir)   
+ 
     def _on_step(self) -> bool:
-        # this is for step reward
-        #info = self.locals.get("infos")
-        return True
-       
-    def _on_rollout_end(self) -> None:
         infos = self.locals.get("infos")
+        current_step = self.num_timesteps
         for i, info in enumerate(infos):
             episode_info = info['episode']
             if episode_info:
                 for key, value in episode_info.items():
                     if "Episode Reward" in key:
                         #print(i, key, value)
-                        self.logger.record(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item())
+                        #self.logger.record(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item())
+                        self.writer.add_scalar(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item(), current_step)
+        #self.writer.add_scalar(f"Episode Reward Env -1/update", 0, current_step)
+        return True
         
     def _on_training_end(self) -> None:
-        infos = self.locals.get("infos")
-        for i, info in enumerate(infos):
-            episode_info = info['episode']
-            if episode_info:
-                for key, value in episode_info.items():
-                    if "Episode Reward" in key:
-                        #print(i, key, value)
-                        self.logger.record(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item())
-               
+        self.writer.close()                
 
 def main():
     """Random actions agent with Isaac Lab environment."""
@@ -109,10 +102,10 @@ def main():
     agent.set_logger(new_logger)
 
     # callbacks for agent
-    checkpoint_callback = CheckpointCallback(save_freq=1000, save_path=log_dir, name_prefix="model", verbose=2)
+    checkpoint_callback = CheckpointCallback(save_freq=100000, save_path=log_dir, name_prefix="model", verbose=2)
     
     # Instantiate the callback
-    reward_logging_callback = RewardLoggingCallback(verbose=1)
+    reward_logging_callback = RewardLoggingCallback(log_dir, verbose=2)
 
     # train the agent
     agent.learn(total_timesteps=n_timesteps, callback=[checkpoint_callback, reward_logging_callback])
