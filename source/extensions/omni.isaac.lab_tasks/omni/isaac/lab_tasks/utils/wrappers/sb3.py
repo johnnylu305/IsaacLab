@@ -152,7 +152,7 @@ class Sb3VecEnvWrapper(VecEnv):
         #   we set it to some high value here. Maybe this is not general but something to think about.
         observation_space = self.unwrapped.single_observation_space["policy"]
         action_space = self.unwrapped.single_action_space
-        if isinstance(action_space, gym.spaces.Box) and action_space.is_bounded() != "both":
+        if isinstance(action_space, gym.spaces.Box) and not action_space.is_bounded(): #!= "both":
             action_space = gym.spaces.Box(low=-100, high=100, shape=action_space.shape)
         # initialize vec-env
         VecEnv.__init__(self, self.num_envs, observation_space, action_space)

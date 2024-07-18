@@ -57,7 +57,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     preplan = False
     save_img = True
     vis_occ = False
-    vis_pointcloud = False
+    vis_pointcloud = True#False
     save_env_ids = [0, 1]
     save_img_freq = 30 #10
 
@@ -75,10 +75,11 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     total_img = 50 #50
 
     # occ grid
-    decrement = 0.4
-    increment = 0.84
-    max_log_odds = 3.5
-    min_log_odds = -3.5
+    # TODO need to tune free threshold
+    decrement = 0.2
+    increment = 1.0
+    max_log_odds = 10.
+    min_log_odds = -10.
 
     # sensor
     # TODO FIX OFFSET
@@ -92,7 +93,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     occ_observations = [grid_size, grid_size, grid_size, 4] # label + xyz
 
     # reward scales
-    occ_reward_scale = 3.0
+    occ_reward_scale = 30.0
     col_reward_scale = -10.0
 
     # simulation

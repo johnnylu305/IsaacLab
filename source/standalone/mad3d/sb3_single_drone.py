@@ -47,7 +47,8 @@ class RewardLoggingCallback(BaseCallback):
     def __init__(self, log_dir, verbose=0):
         super(RewardLoggingCallback, self).__init__(verbose)
         self.writer = SummaryWriter(log_dir)   
- 
+        self.freq = 200 
+
     def _on_step(self) -> bool:
         infos = self.locals.get("infos")
         current_step = self.num_timesteps
@@ -59,7 +60,16 @@ class RewardLoggingCallback(BaseCallback):
                         #print(i, key, value)
                         #self.logger.record(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item())
                         self.writer.add_scalar(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item(), current_step)
-        #self.writer.add_scalar(f"Episode Reward Env -1/update", 0, current_step)
+                    elif "train_cus" in key:
+                        for j, v in enumerate(value):
+                            self.writer.add_scalar(f"Episode Reward Env {i}/{key.split('/')[1]}", v, current_step-(len(value)-j-1)*len(infos))                        
+        if self.num_timesteps % self.freq == 0:
+            x_s, y_s, z_s, pitch_s, yaw_s = torch.exp(self.model.policy.log_std).detach().cpu().numpy()
+            self.writer.add_scalar("train_cus/x_std", x_s, current_step)
+            self.writer.add_scalar("train_cus/y_std", y_s, current_step)
+            self.writer.add_scalar("train_cus/z_std", z_s, current_step)
+            self.writer.add_scalar("train_cus/pitch_std", pitch_s, current_step)
+            self.writer.add_scalar("train_cus/yaw_std", yaw_s, current_step)
         return True
         
     def _on_training_end(self) -> None:
@@ -94,15 +104,20 @@ def main():
     # wrap around environment for stable baselines
     env = Sb3VecEnvWrapper(env)
  
+    print(f"[INFO]: Gym observation space: {env.observation_space}")
+    print(f"[INFO]: Gym action space: {env.action_space}")
+
     # create agent from stable baselines
     agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
-
+    #print(agent.policy)
+    #exit()
     # configure the logger
     new_logger = configure(log_dir, ["stdout", "tensorboard"])
     agent.set_logger(new_logger)
 
     # callbacks for agent
-    checkpoint_callback = CheckpointCallback(save_freq=100000, save_path=log_dir, name_prefix="model", verbose=2)
+    # save: save_freq * num_envs
+    checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=log_dir, name_prefix="model", verbose=2)
     
     # Instantiate the callback
     reward_logging_callback = RewardLoggingCallback(log_dir, verbose=2)
