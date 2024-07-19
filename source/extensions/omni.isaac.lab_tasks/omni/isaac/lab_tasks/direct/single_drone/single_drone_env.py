@@ -103,8 +103,10 @@ class QuadcopterEnv(DirectRLEnv):
         # for pre-planned trajectory 
         self._index = -1
         radius = self.cfg.env_size/2.0 * 0.8 # Radius of the cylinder
-        height = self.cfg.env_size/2.0 * 0.5 # Height of the cylinder
-        theta = [0, np.pi/2., np.pi, np.pi*3/2]
+        height = self.cfg.env_size/2.0 * 1.8 # Height of the cylinder
+        #theta = [0, np.pi/2., np.pi, np.pi*3/2]
+        #theta = [0, np.pi/4., np.pi/2, np.pi*3/4, np.pi, np.pi*5/4, np.pi*3/2, np.pi*7/4]
+        theta = np.linspace(0,np.pi*6,20)
         self.num_points = len(theta)
         self.x = radius * np.cos(theta)
         self.y = radius * np.sin(theta)
@@ -185,37 +187,40 @@ class QuadcopterEnv(DirectRLEnv):
             rescale_robot(f"/World/envs/env_{i}/Robot", robot_scale)
 
         # scene
-        scenes_path = []
-        # Loop over each batch number
-        for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
-            # Generate the path pattern for the glob function
-            path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
-            # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
-            scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
-        # only use one building
-        scenes_path = scenes_path[:1]
-       
-        self.cfg_list = []
-        for scene_path in scenes_path:
-            self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
-        _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
-                                                        env_ids=torch.arange(self.cfg.num_envs), my_asset_list=self.cfg_list)
+        if not self.cfg.preplan:
+            scenes_path = []
+            # Loop over each batch number
+            for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
+                # Generate the path pattern for the glob function
+                path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
+                scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
+            # only use one building
+            #scenes_path = scenes_path[1:2]
+            scenes_path = scenes_path[0:1]
+            self.cfg_list = []
+            for scene_path in scenes_path:
+                self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
 
-        env_ids = torch.arange(self.cfg.num_envs)
-        for i, scene in enumerate(scene_lists):
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
-            occ_path = os.path.join(path, "fill_occ_set.pkl")
-            # To load the occupied voxels from the file
-            with open(occ_path, 'rb') as file:
-                self.occs[env_ids[i]] = pickle.load(file)      
+            _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+                                                            env_ids=torch.arange(self.cfg.num_envs), my_asset_list=self.cfg_list)
 
-        for i, scene in enumerate(scene_lists):
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
-            occ_path = os.path.join(path, "occ.npy")
-            self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
+            env_ids = torch.arange(self.cfg.num_envs)
+            for i, scene in enumerate(scene_lists):
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+                occ_path = os.path.join(path, "fill_occ_set.pkl")
+                # To load the occupied voxels from the file
+                with open(occ_path, 'rb') as file:
+                    self.occs[env_ids[i]] = pickle.load(file)      
+
+            for i, scene in enumerate(scene_lists):
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
+                occ_path = os.path.join(path, "occ.npy")
+                self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
 
         self.fg_masks = torch.zeros((self.cfg.num_envs, self.cfg.camera_h, self.cfg.camera_w)).to(self.device)
         self.point_cloud = o3d.geometry.PointCloud()
+        self.scene_id=0
         # for visualization
         #temp = set()
         #for x in range(self.cfg.grid_size):
@@ -253,14 +258,14 @@ class QuadcopterEnv(DirectRLEnv):
 
     def _apply_action(self):
         if self.cfg.preplan:
-            target_position = np.array([self.x[self._index], self.y[self._index], self.z[self._index]])
+            target_position = np.array([self.x[self._index], self.y[self._index], self.z[self._index]]).astype(np.float32)
             yaw = compute_orientation(target_position)
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
             target_orientation = target_orientation.repeat(self.num_envs,1)
             yaw = yaw * torch.ones(self.num_envs,).to(self.device)
-            pitch_radians = 0.2 * torch.ones(self.num_envs,).to(self.device)
+            pitch_radians = 0.1 * torch.ones(self.num_envs,).to(self.device)
             
         else:
             target_position = self._xyz
@@ -298,8 +303,14 @@ class QuadcopterEnv(DirectRLEnv):
         z_new = root_state[:, 2] + self.cfg.camera_offset[2]
  
         new_positions = torch.stack([x_new, y_new, z_new], dim=1)
- 
-        self._camera.set_world_poses(new_positions, orientation_camera)
+
+        if self.cfg.preplan:
+            view_target = self._terrain.env_origins.repeat(self.num_envs,1)
+            #view_target[:,2]+=5
+            target_position[:,2]-=2
+            self._camera.set_world_poses_from_view(target_position,view_target)
+        else:
+            self._camera.set_world_poses(new_positions, orientation_camera)
         # for tiled camera
         #self.sim.step()
         #self.scene.update(dt=0)
@@ -514,7 +525,7 @@ class QuadcopterEnv(DirectRLEnv):
         #print("Cov", num_match_occ/total_occ, self.last_coverage_ratio)
         #print(torch.sum(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), dim=(1, 2, 3))/total_occ)
         self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
-      
+        
         fg_ratio = torch.sum(self.fg_masks, dim=(1, 2)).reshape(-1, 1)/(self.cfg.camera_w*self.cfg.camera_h) 
         sub_goal_reward = torch.logical_and(self.coverage_ratio_reward>=0.9, self.sub_goal==0)
         self.sub_goal[sub_goal_reward] = 1.
@@ -547,8 +558,8 @@ class QuadcopterEnv(DirectRLEnv):
         # update observation here because _get_dones is the first call after _apply_action
         self.update_observations()
         time_out = self.episode_length_buf >= self.max_episode_length-1
-       
-        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= 0.99)
+        done = self.env_step.to(self.device) >= self.cfg.total_img - 1
+        #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= 0.99)
         died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
  
         return died, time_out
@@ -563,7 +574,19 @@ class QuadcopterEnv(DirectRLEnv):
         if len(env_ids) == self.num_envs:
             # Spread out the resets to avoid spikes in training when many environments reset at a similar time
             self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
-
+        if self.cfg.preplan and self.scene_id>0:
+            print(self._episode_sums["status coverage_ratio"])
+            file_path = 'test.npy'
+            if os.path.exists(file_path):
+                # Load the existing data
+                existing_data = np.load(file_path)
+                # Append the new data
+                updated_data = np.concatenate((existing_data, self._episode_sums["status coverage_ratio"].cpu().numpy()))
+            else:
+                # If the file doesn't exist, the new data becomes the updated data
+                updated_data = self._episode_sums["status coverage_ratio"].cpu().numpy()
+            
+            np.save('test.npy', updated_data)
 
         # Logging
         extras = dict()
@@ -575,6 +598,7 @@ class QuadcopterEnv(DirectRLEnv):
                 extras["Episode Reward/" + key] = self._episode_sums[key] / self.env_step.to(self.device)
                 self._episode_sums[key][env_ids] = 0.0
         extras["Episode Reward/status coverage_ratio"] = self._episode_sums["status coverage_ratio"].clone()
+        
         self._episode_sums["status coverage_ratio"][env_ids] = 0.0
 
         extras["train_cus/x"] = self.episode_rec["x"].copy()
@@ -662,23 +686,61 @@ class QuadcopterEnv(DirectRLEnv):
         # only reset corresponding env
         self.grid.grid[env_ids] = 0 
                                 
-        # add scene
-        _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
-                                                        env_ids=env_ids, my_asset_list=self.cfg_list)
+        
 
+        if self.cfg.preplan:
+            scenes_path = []
+            self.scene_id+=1
+
+            for batch_num in range(1, 13):  # Range goes from 1 to 6 inclusive
+                # Generate the path pattern for the glob function
+                path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
+                scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
+            #print(self._episode_sums["status coverage_ratio"])
+            
+            scenes_path = scenes_path[self.scene_id:self.scene_id+1]
+            self.cfg_list = []
+            for scene_path in scenes_path:
+                self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
+            _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+                                                            env_ids=env_ids, my_asset_list=self.cfg_list)
+            print(self.cfg_list)
+            print(scene_lists)
+        else:
+            # add scene
+            _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+                                                         env_ids=env_ids, my_asset_list=self.cfg_list)
+        
         # load occ set and gt
         for i, scene in enumerate(scene_lists):
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
             occ_path = os.path.join(path, "fill_occ_set.pkl")
             # To load the occupied voxels from the file
             with open(occ_path, 'rb') as file:
-                self.occs[env_ids[i]] = pickle.load(file)      
+                self.occs[env_ids[i]] = pickle.load(file)    
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
             occ_path = os.path.join(path, "occ.npy")
             self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
             #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
            
-       
+        # Function to generate a list of all possible positions excluding occupied positions
+        #def generate_possible_positions(x_range, y_range, z_range, occupied_set):
+        possible_positions = []
+        random_position_tensor = torch.empty((0, 3), dtype=torch.int)
+        for i in env_ids:
+            for x in range(-self.cfg.env_size//2, self.cfg.env_size//2):
+                for y in range(-self.cfg.env_size//2, self.cfg.env_size//2):
+                    for z in range(0, self.cfg.env_size):
+                        pos = (x, y, z)
+                        #import pdb; pdb.set_trace()
+                        if pos not in self.occs[i]:
+                            possible_positions.append(pos)
+            print(random.choice(possible_positions))
+            random_position = random.choice(possible_positions)
+            random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
+        #import pdb; pdb.set_trace()
+        self._camera.set_world_poses(random_position_tensor+self._terrain.env_origins, orientation_camera, env_ids)
         #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
         #slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters        
         #for i in range(len(env_ids)):
