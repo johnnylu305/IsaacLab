@@ -728,19 +728,19 @@ class QuadcopterEnv(DirectRLEnv):
         #def generate_possible_positions(x_range, y_range, z_range, occupied_set):
         possible_positions = []
         random_position_tensor = torch.empty((0, 3), dtype=torch.int)
-        for i in env_ids:
+        for env_id in env_ids:
             for x in range(-self.cfg.env_size//2, self.cfg.env_size//2):
                 for y in range(-self.cfg.env_size//2, self.cfg.env_size//2):
                     for z in range(0, self.cfg.env_size):
                         pos = (x, y, z)
                         #import pdb; pdb.set_trace()
-                        if pos not in self.occs[i]:
+                        if pos not in self.occs[env_id]:
                             possible_positions.append(pos)
             print(random.choice(possible_positions))
             random_position = random.choice(possible_positions)
             random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
         #import pdb; pdb.set_trace()
-        self._camera.set_world_poses(random_position_tensor+self._terrain.env_origins, orientation_camera, env_ids)
+        self._camera.set_world_poses(random_position_tensor.cuda()+self._terrain.env_origins[env_ids], orientation_camera, env_ids)
         #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
         #slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters        
         #for i in range(len(env_ids)):
