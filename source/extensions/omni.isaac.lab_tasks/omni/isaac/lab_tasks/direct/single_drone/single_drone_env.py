@@ -60,6 +60,7 @@ import time
 from omni.isaac.lab.markers import VisualizationMarkers
 import open3d as o3d 
 from .utils import merge_point_clouds
+import re
 
 cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
 cfg.markers["hit"].radius = 0.002
@@ -252,6 +253,8 @@ class QuadcopterEnv(DirectRLEnv):
         # TODO tune z
         # x: -10~10, y: -10~10, z: 0~14
         self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0, self.cfg.env_size/2.0, 0.6*self.cfg.env_size/4.0]).to(self.device)
+        #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([0, self.cfg.env_size/2.0, 0.6*self.cfg.env_size/4.0]).to(self.device)
+
         self._yaw = self._actions[:,3]*torch.pi
         #self._pitch = (self._actions[:,4]+1)*torch.pi/4.
         self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
@@ -534,7 +537,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         num_match_occ = torch.sum(torch.logical_and(hard_occ, self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
-        #print("Cov", num_match_occ/total_occ, self.last_coverage_ratio)
+        print("Cov", num_match_occ/total_occ, self.last_coverage_ratio)
         #print(torch.sum(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), dim=(1, 2, 3))/total_occ)
         self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
         
@@ -573,8 +576,10 @@ class QuadcopterEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
        
         done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
+        if self.cfg.preplan:
+            done = self.env_step.to(self.device) >= self.cfg.total_img - 1
+            time_out = time_out*0
         died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
- 
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -657,40 +662,40 @@ class QuadcopterEnv(DirectRLEnv):
         #self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         #self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         #self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-        
-        target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
-        yaw = compute_orientation(target_position)
-        target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
-        target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
-        target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
-        
-        # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
-        orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
-        
-        default_root_state[:,:3] = target_position
-        default_root_state[:,3:7] = target_orientation        
-        default_root_state[:, :3] += self._terrain.env_origins[env_ids]
-        self.default_root_state = default_root_state
+        if not self.cfg.random_initial:
+            target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
+            yaw = compute_orientation(target_position)
+            target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
+            target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
+            target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
+            
+            # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
+            orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
+            
+            default_root_state[:,:3] = target_position
+            default_root_state[:,3:7] = target_orientation        
+            default_root_state[:, :3] += self._terrain.env_origins[env_ids]
+            self.default_root_state = default_root_state
 
-        self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
-        self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
-        self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+            self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
+            self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
+            self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+            
         
-     
-        x_new = default_root_state[:, 0] + self.cfg.camera_offset[0] * np.cos(yaw) - self.cfg.camera_offset[1] * np.sin(yaw)
-        y_new = default_root_state[:, 1] + self.cfg.camera_offset[0] * np.sin(yaw) + self.cfg.camera_offset[1] * np.cos(yaw)
-        z_new = default_root_state[:, 2] + self.cfg.camera_offset[2]
+            x_new = default_root_state[:, 0] + self.cfg.camera_offset[0] * np.cos(yaw) - self.cfg.camera_offset[1] * np.sin(yaw)
+            y_new = default_root_state[:, 1] + self.cfg.camera_offset[0] * np.sin(yaw) + self.cfg.camera_offset[1] * np.cos(yaw)
+            z_new = default_root_state[:, 2] + self.cfg.camera_offset[2]
 
-        new_positions = torch.stack([x_new, y_new, z_new], dim=1)
-       
-        orientation_camera = orientation_camera.repeat(len(env_ids), 1)
+            new_positions = torch.stack([x_new, y_new, z_new], dim=1)
+        
+            orientation_camera = orientation_camera.repeat(len(env_ids), 1)
 
-        self._camera.set_world_poses(new_positions, orientation_camera, env_ids)
+            self._camera.set_world_poses(new_positions, orientation_camera, env_ids)
 
-        # record robot pos and pitch, yaw
-        self.robot_pos[env_ids] = target_position + self._terrain.env_origins[env_ids]
-        self.robot_ori[env_ids, 0] = 0
-        self.robot_ori[env_ids, 1] = yaw
+            # record robot pos and pitch, yaw
+            self.robot_pos[env_ids] = target_position + self._terrain.env_origins[env_ids]
+            self.robot_ori[env_ids, 0] = 0
+            self.robot_ori[env_ids, 1] = yaw
        
         # clear building
         for env_id in env_ids:
@@ -711,16 +716,28 @@ class QuadcopterEnv(DirectRLEnv):
                 # Generate the path pattern for the glob function
                 path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
                 # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
-                scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
+                scenes_path.extend((glob.glob(path_pattern, recursive=True)))
+            
+            # Function to convert text to integers if possible
+            def atoi(text):
+                return int(text) if text.isdigit() else text
+
+            # Function to split the filename into parts that are either digits or non-digits
+            def natural_keys(text):
+                return [atoi(c) for c in re.split(r'(\d+)', text)]
+
+            scenes_path_sorted = sorted(scenes_path, key=natural_keys)
+            #import pdb; pdb.set_trace()
             #print(self._episode_sums["status coverage_ratio"])
             
-            scenes_path = scenes_path[self.scene_id:self.scene_id+1]
+            scenes_path = scenes_path_sorted[self.scene_id:self.scene_id+1]
+            #scenes_path = scenes_path_sorted[6:7]
             self.cfg_list = []
             for scene_path in scenes_path:
                 self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
             _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
                                                             env_ids=env_ids, my_asset_list=self.cfg_list)
-            print(self.cfg_list)
+            #print(self.cfg_list)
             print(scene_lists)
         else:
             # add scene
@@ -735,6 +752,7 @@ class QuadcopterEnv(DirectRLEnv):
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)    
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
+            print(path)
             occ_path = os.path.join(path, "occ.npy")
             self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
             #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
