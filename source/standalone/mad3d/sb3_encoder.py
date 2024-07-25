@@ -18,25 +18,52 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         # We need to know size of the output of this extractor,
         # so go over all the spaces and compute output feature sizes
         for key, subspace in observation_space.spaces.items():
-            """
             if key == "pose_step":
-                extractors[key] = nn.Sequential(nn.Linear(subspace.shape[0], 32))
+                extractors[key] = nn.Sequential(
+                                    nn.Linear(subspace.shape[0], 32),
+                                    nn.LeakyReLU(),
+                                    )
+                """
+                extractors[key] = nn.Sequential(
+                                    nn.Linear(subspace.shape[0], 64),
+                                    nn.LeakyReLU(),
+                                    nn.Linear(64, 64),
+                                    nn.LeakyReLU(),
+                                    )
+                """
                 total_concat_size += 32
-            """
-            """
             if key == "img":
-                c, h, w = subspace.shape
-                extractors[key] = nn.Sequential(nn.Conv2d(in_channels=6, out_channels=16, kernel_size=3, stride=2, padding=1), # First conv layer
-                                                nn.ReLU(),  # First ReLU activation
-                                                nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1), # Second conv layer
-                                                nn.ReLU(),   # Second ReLU activation
-                                                nn.Flatten(),  # Flatten the output to feed into linear layer
-                                                nn.Linear(in_features=(h//4) * (w//4) * 32, out_features=256)  # Linear layer to 256 units
-                                            )
-                total_concat_size += 256
-            """
+                small_net = True
+                if small_net:               
+                    c, h, w = subspace.shape
+                    extractors[key] = nn.Sequential(nn.Conv2d(in_channels=6, out_channels=12, kernel_size=5, stride=2, padding=1),
+                                                    nn.LeakyReLU(),  # First ReLU activation
+                                                    nn.Conv2d(in_channels=12, out_channels=12, kernel_size=5, stride=2, padding=1), 
+                                                    nn.LeakyReLU(),   # Second ReLU activation
+                                                    nn.Conv2d(in_channels=12, out_channels=12, kernel_size=5, stride=2, padding=1), 
+                                                    nn.LeakyReLU(),   # Second ReLU activation
+                                                    nn.Flatten(),  # Flatten the output to feed into linear layer
+                                                    nn.Linear(in_features=15552, out_features=256),  # Linear layer to 256 units
+                                                    nn.LeakyReLU(),   # Second ReLU activation
+                                                )
+                    total_concat_size += 256
+                else: 
+                    c, h, w = subspace.shape
+                    extractors[key] = nn.Sequential(nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5, stride=1, padding=1),
+                                                    nn.LeakyReLU(),  # First ReLU activation
+                                                    nn.Conv2d(in_channels=16, out_channels=16, kernel_size=5, stride=1, padding=1),
+                                                    nn.LeakyReLU(),   # Second ReLU activation
+                                                    nn.Conv2d(in_channels=16, out_channels=16, kernel_size=5, stride=2, padding=1),
+                                                    nn.LeakyReLU(),   # Second ReLU activation
+                                                    nn.Conv2d(in_channels=16, out_channels=16, kernel_size=5, stride=2, padding=1),
+                                                    nn.LeakyReLU(),   # Second ReLU activation
+                                                    nn.Flatten(),  # Flatten the output to feed into linear layer
+                                                    nn.Linear(in_features=85264, out_features=256),  # Linear layer to 256 units
+                                                    nn.LeakyReLU()
+                                                )
+                    total_concat_size += 256   
             if key == "occ":
-                small_net = False
+                small_net = True
                 if small_net:
                     c, x_res, y_res, z_res = subspace.shape
                     x_out = (x_res + 2 - 3) // 2 + 1
@@ -67,7 +94,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                                                     nn.Linear(in_features=x_res * y_res * z_res * 32, out_features=256),
                                                     nn.LeakyReLU(),
                                                   )
-                total_concat_size += 256         
+                total_concat_size += 256
             #if key == "env_step":
                 #extractors[key] = nn.Sequential(nn.Linear(1, 2))
                 #nn.Sequential(nn.Identity())
