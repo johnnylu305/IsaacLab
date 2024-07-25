@@ -477,3 +477,25 @@ def extract_foreground(p3d_world, floor_z, h, w, bound_mask):
     # N, H*W, 3
     mask = torch.logical_and(((torch.abs(p3d_world[:, 2]) - floor_z) > 0.1), bound_mask).int().reshape(-1, h, w).transpose(1, 2)
     return mask
+
+def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
+    #print(occ_grid_xyz.shape)
+    #print(camera_xyz.shape)
+
+    rays = camera_xyz - occ_grid_xyz
+    
+    # Normalize rays
+    rays_norm = rays / torch.norm(rays, dim=-1, keepdim=True)+1e-10
+    
+    faces = torch.tensor([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=torch.float32).to(device)
+    face_grid = torch.zeros((grid_size, grid_size, grid_size, 6), dtype=torch.bool).to(device)
+    
+    # Check visibility for each face
+    for i, face in enumerate(faces):
+        dot_product = torch.sum(rays_norm * face, dim=-1)
+        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0
+    
+    #print(face_grid)
+    #print(face_grid.shape)
+    #exit()
+    return face_grid

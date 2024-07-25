@@ -57,7 +57,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     preplan = False
     save_img = True
     vis_occ = False
-    vis_pointcloud = True#False
+    vis_pointcloud = False
     save_env_ids = [0, 1]
     save_img_freq = 30 #10
 
@@ -73,6 +73,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # obv
     img_t = 2 
     total_img = 50 #50
+    goal = 0.92
 
     # occ grid
     # TODO need to tune free threshold
@@ -94,7 +95,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # reward scales
     occ_reward_scale = 30.0
-    col_reward_scale = -10.0
+    col_reward_scale = -30.0 #-10.0
 
     # simulation
     sim: SimulationCfg = SimulationCfg(
