@@ -25,3 +25,13 @@ ln -s path_to_isaac_sim _isaac_sim
 # cartpole sb3 example
 ./isaaclab.sh -p source/standalone/workflows/sb3/train.py --task=Isaac-Cartpole-Direct-v0
 ```
+## For ssh user
+```
+# headless (no gui)
+./isaaclab.sh -p source/standalone/workflows/sb3/train.py --task=Isaac-Cartpole-Direct-v0 --livestream 1
+
+# webrtx (gui)
+./isaaclab.sh -p source/standalone/workflows/sb3/train.py --task=Isaac-Cartpole-Direct-v0 --livestream 2
+# use this link to access gui
+http://138.25.209.105:8211/streaming/webrtc-demo/?server=138.25.209.105
+```
