@@ -696,7 +696,16 @@ class QuadcopterEnv(DirectRLEnv):
             self.robot_pos[env_ids] = target_position + self._terrain.env_origins[env_ids]
             self.robot_ori[env_ids, 0] = 0
             self.robot_ori[env_ids, 1] = yaw
-       
+        else:
+            yaw = compute_orientation(random_position)
+            target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
+            target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
+            
+            # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
+            orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
+            orientation_camera = orientation_camera.repeat(len(env_ids), 1)
+            self._camera.set_world_poses(random_position_tensor.cuda()+self._terrain.env_origins[env_ids], orientation_camera, env_ids)
+
         # clear building
         for env_id in env_ids:
             delete_prim(f'/World/envs/env_{env_id}/Scene')
@@ -775,7 +784,7 @@ class QuadcopterEnv(DirectRLEnv):
             random_position = random.choice(possible_positions)
             random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
         #import pdb; pdb.set_trace()
-        self._camera.set_world_poses(random_position_tensor.cuda()+self._terrain.env_origins[env_ids], orientation_camera, env_ids)
+        #self._camera.set_world_poses_from_view(random_position_tensor.cuda()+self._terrain.env_origins[env_ids], self._terrain.env_origins[env_ids], env_ids)
         #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
         #slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters        
         #for i in range(len(env_ids)):
