@@ -42,7 +42,7 @@ Download raw [data](https://drive.google.com/file/d/13ojen4WYDuRf47Hg3vuEcuwso5G
 Make USD data
 ```
 # convert FBX to USD
-./isaaclab.sh -p source/standalone/mad3d/convert_mesh_rescale.py ../Dataset/Raw_FBX/ ../Dataset/Raw_Rescale_USD/ --headless
+./isaaclab.sh -p source/standalone/mad3d/convert_mesh_rescale.py /home/mad3d/Documents/demo/Dataset/Raw_FBX/ /home/mad3d/Documents/demo/Dataset/Raw_Rescale_USD/ --headless
 ```
 Download preprocessed occupancy [data](https://drive.google.com/file/d/1nTxavT1OunN_ZK4X5GR_FajhkHCFlD62/view?usp=sharing)
 
