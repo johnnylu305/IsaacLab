@@ -37,9 +37,12 @@ http://138.25.209.105:8211/streaming/webrtc-demo/?server=138.25.209.105
 ```
 
 ## Setup Dataset
+Download raw [data](https://drive.google.com/file/d/13ojen4WYDuRf47Hg3vuEcuwso5G5Shmh/view?usp=drive_link)
+Make USD data
 ```
 
 ```
+Download preprocessed occupancy [data](https://drive.google.com/file/d/1nTxavT1OunN_ZK4X5GR_FajhkHCFlD62/view?usp=sharing)
 
 ## Try MAD3D Single Drone for ssh user
 ```
