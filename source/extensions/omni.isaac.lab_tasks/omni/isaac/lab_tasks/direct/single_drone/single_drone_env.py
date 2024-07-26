@@ -267,7 +267,7 @@ class QuadcopterEnv(DirectRLEnv):
     def _apply_action(self):
         if self.cfg.preplan:
             target_position = np.array([self.x[self._index], self.y[self._index], self.z[self._index]]).astype(np.float32)
-            yaw = compute_orientation(target_position)
+            yaw, pitch = compute_orientation(target_position)
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
@@ -662,50 +662,7 @@ class QuadcopterEnv(DirectRLEnv):
         #self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
         #self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
         #self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-        if not self.cfg.random_initial:
-            target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
-            yaw = compute_orientation(target_position)
-            target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
-            target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
-            target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
-            
-            # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
-            orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
-            
-            default_root_state[:,:3] = target_position
-            default_root_state[:,3:7] = target_orientation        
-            default_root_state[:, :3] += self._terrain.env_origins[env_ids]
-            self.default_root_state = default_root_state
-
-            self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
-            self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
-            self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
-            
         
-            x_new = default_root_state[:, 0] + self.cfg.camera_offset[0] * np.cos(yaw) - self.cfg.camera_offset[1] * np.sin(yaw)
-            y_new = default_root_state[:, 1] + self.cfg.camera_offset[0] * np.sin(yaw) + self.cfg.camera_offset[1] * np.cos(yaw)
-            z_new = default_root_state[:, 2] + self.cfg.camera_offset[2]
-
-            new_positions = torch.stack([x_new, y_new, z_new], dim=1)
-        
-            orientation_camera = orientation_camera.repeat(len(env_ids), 1)
-
-            self._camera.set_world_poses(new_positions, orientation_camera, env_ids)
-
-            # record robot pos and pitch, yaw
-            self.robot_pos[env_ids] = target_position + self._terrain.env_origins[env_ids]
-            self.robot_ori[env_ids, 0] = 0
-            self.robot_ori[env_ids, 1] = yaw
-        else:
-            yaw = compute_orientation(random_position)
-            target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
-            target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
-            
-            # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
-            orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
-            orientation_camera = orientation_camera.repeat(len(env_ids), 1)
-            self._camera.set_world_poses(random_position_tensor.cuda()+self._terrain.env_origins[env_ids], orientation_camera, env_ids)
-
         # clear building
         for env_id in env_ids:
             delete_prim(f'/World/envs/env_{env_id}/Scene')
@@ -768,21 +725,71 @@ class QuadcopterEnv(DirectRLEnv):
             occ_path = os.path.join(path, "faces.npy")
             self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
            
-        # Function to generate a list of all possible positions excluding occupied positions
-        #def generate_possible_positions(x_range, y_range, z_range, occupied_set):
-        possible_positions = []
-        random_position_tensor = torch.empty((0, 3), dtype=torch.int)
-        for env_id in env_ids:
-            for x in range(-self.cfg.env_size//2, self.cfg.env_size//2):
-                for y in range(-self.cfg.env_size//2, self.cfg.env_size//2):
-                    for z in range(0, self.cfg.env_size):
-                        pos = (x, y, z)
-                        #import pdb; pdb.set_trace()
-                        if pos not in self.occs[env_id]:
-                            possible_positions.append(pos)
-            print(random.choice(possible_positions))
-            random_position = random.choice(possible_positions)
-            random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
+        if not self.cfg.random_initial:
+            target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
+            yaw,pitch = compute_orientation(target_position)
+            target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
+            target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
+            target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
+            
+            # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
+            orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
+            
+            default_root_state[:,:3] = target_position
+            default_root_state[:,3:7] = target_orientation        
+            default_root_state[:, :3] += self._terrain.env_origins[env_ids]
+            self.default_root_state = default_root_state
+
+            self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
+            self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
+            self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
+            
+        
+            x_new = default_root_state[:, 0] + self.cfg.camera_offset[0] * np.cos(yaw) - self.cfg.camera_offset[1] * np.sin(yaw)
+            y_new = default_root_state[:, 1] + self.cfg.camera_offset[0] * np.sin(yaw) + self.cfg.camera_offset[1] * np.cos(yaw)
+            z_new = default_root_state[:, 2] + self.cfg.camera_offset[2]
+
+            new_positions = torch.stack([x_new, y_new, z_new], dim=1)
+        
+            orientation_camera = orientation_camera.repeat(len(env_ids), 1)
+
+            self._camera.set_world_poses(new_positions, orientation_camera, env_ids)
+
+            # record robot pos and pitch, yaw
+            self.robot_pos[env_ids] = target_position + self._terrain.env_origins[env_ids]
+            self.robot_ori[env_ids, 0] = 0
+            self.robot_ori[env_ids, 1] = yaw
+        else:
+            # Function to generate a list of all possible positions excluding occupied positions
+            #def generate_possible_positions(x_range, y_range, z_range, occupied_set):
+            possible_positions = []
+            random_position_tensor = torch.empty((0, 3), dtype=torch.int)
+            for env_id in env_ids:
+                for x in range(-self.cfg.env_size//2, self.cfg.env_size//2):
+                    for y in range(-self.cfg.env_size//2, self.cfg.env_size//2):
+                        for z in range(0, self.cfg.env_size):
+                            pos = (x, y, z)
+                            #import pdb; pdb.set_trace()
+                            if pos not in self.occs[env_id]:
+                                possible_positions.append(pos)
+                print(random.choice(possible_positions))
+                random_position = random.choice(possible_positions)
+                #random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
+                random_position_tensor = torch.tensor(random_position).unsqueeze(0)
+                yaw, pitch = compute_orientation(random_position)
+                #print('pitch', pitch)
+                target_orientation = rot_utils.euler_angles_to_quats(np.array([0, -pitch, yaw]), degrees=False)
+                target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
+                
+                # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
+                orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
+                #import pdb; pdb.set_trace()
+                #orientation_camera = orientation_camera.repeat(len(env_ids), 1)
+                self._camera.set_world_poses(random_position_tensor.cuda()+self._terrain.env_origins[env_id], orientation_camera, [env_id])
+                self.robot_pos[env_id] = target_position + self._terrain.env_origins[env_ids]
+                self.robot_ori[env_id, 0] = pitch
+                self.robot_ori[env_id, 1] = yaw
+
         #import pdb; pdb.set_trace()
         #self._camera.set_world_poses_from_view(random_position_tensor.cuda()+self._terrain.env_origins[env_ids], self._terrain.env_origins[env_ids], env_ids)
         #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell

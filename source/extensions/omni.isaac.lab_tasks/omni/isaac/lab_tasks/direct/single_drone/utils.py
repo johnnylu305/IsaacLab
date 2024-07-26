@@ -362,11 +362,12 @@ def compute_orientation(current_position, target_position=np.array([0, 0, 0])):
     # Normalize the direction vector
     direction_vector = normalize_vector(direction_vector)
     
-    forward_vector = normalize_vector(np.array([1, 1, 0]))
-    rotation_axis = np.array([0, 0, 1])
-    rotation_angle = np.arctan2(direction_vector[1],direction_vector[0])
-     
-    return rotation_angle
+    # Compute the yaw angle (in radians)
+    yaw = np.arctan2(direction_vector[1], direction_vector[0])
+    
+    # Compute the pitch angle (in radians)
+    pitch = np.arcsin(direction_vector[2])
+    return yaw, pitch
 
 def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, base_height, z,env_size, target=0, h_off=60):
     stage = omni.usd.get_context().get_stage()
