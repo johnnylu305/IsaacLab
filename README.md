@@ -35,3 +35,19 @@ ln -s path_to_isaac_sim _isaac_sim
 # use this link to access gui
 http://138.25.209.105:8211/streaming/webrtc-demo/?server=138.25.209.105
 ```
+
+## Setup Dataset
+```
+
+```
+
+## Try MAD3D Single Drone for ssh user
+```
+# headless (no gui)
+./isaaclab.sh -p source/standalone/workflows/sb3/train.py --task=Isaac-Quadcopter-Direct-v1 --num_envs 8 --enable_cameras --livestream 1
+
+# webrtx (gui)
+./isaaclab.sh -p source/standalone/workflows/sb3/train.py --task=Isaac-Quadcopter-Direct-v1 --num_envs 8 --enable_cameras --livestream 2
+# use this link to access gui
+http://138.25.209.105:8211/streaming/webrtc-demo/?server=138.25.209.105
+```
