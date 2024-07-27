@@ -60,7 +60,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     vis_pointcloud = False
     save_env_ids = [0, 1]
     save_img_freq = 30 #10
-    random_initial = True
+    random_initial = False
 
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 60 #30 # in meter, 2 cells is one unit
@@ -69,7 +69,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     #decimation = 10 # _apply_action will run decimation time
     num_actions = 5 # x, y, z, yaw, pitch
     num_states = 0
-    episode_length_s = 200 # timeout
+    episode_length_s = 20000 # timeout
     debug_vis = False
 
     # obv
@@ -145,7 +145,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
              #focus_distance=1.0, # in m 
              horizontal_aperture=24., # in mm 
              #clipping_range=(0.1, 20.0) # near and far plane in meter
-             clipping_range=(0.2, 60.0) # near and far plane in meter
+             clipping_range=(0.1, 60.0) # near and far plane in meter
          ),
          width=camera_w,
          height=camera_h,
