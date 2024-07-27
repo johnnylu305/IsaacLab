@@ -404,7 +404,7 @@ class QuadcopterEnv(DirectRLEnv):
                 root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
-                x, y, z = self.obv_pose_history[i, self.env_step[i], :3]
+                x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
                 plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}.png'),
                            np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
                            cmap='gray')
@@ -569,7 +569,7 @@ class QuadcopterEnv(DirectRLEnv):
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value.squeeze(1)
-        self._episode_sums["status coverage_ratio"] = num_match_occ/total_occ
+        self._episode_sums["status coverage_ratio"] = self.coverage_ratio_reward.squeeze() #num_match_occ/total_occ
         for i in range(self.cfg.num_envs):
             self.episode_rec["x"][i].append(self.robot_pos[i, 0].clone()-self._terrain.env_origins[i][0])
             self.episode_rec["y"][i].append(self.robot_pos[i, 1].clone()-self._terrain.env_origins[i][1])
@@ -717,7 +717,7 @@ class QuadcopterEnv(DirectRLEnv):
             _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
                                                             env_ids=env_ids, my_asset_list=self.cfg_list)
             #print(self.cfg_list)
-            print(scene_lists)
+            #print(scene_lists)
         else:
             # add scene
             _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
@@ -732,7 +732,7 @@ class QuadcopterEnv(DirectRLEnv):
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)    
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
-            print(path)
+            #print(path)
             occ_path = os.path.join(path, "occ.npy")
             self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
             #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
