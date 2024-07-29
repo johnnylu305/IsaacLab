@@ -552,14 +552,15 @@ class QuadcopterEnv(DirectRLEnv):
         sub_goal_reward = torch.logical_and(self.coverage_ratio_reward>=0.9, self.sub_goal==0)
         self.sub_goal[sub_goal_reward] = 1.
  
-        factor = torch.ones(1).to(self.device) * 20
-        factor_goal = torch.ones(1).to(self.device) * 1
+        factor = torch.ones(1).to(self.device) * 2
+        factor_small = torch.ones(1).to(self.device) * 1
+        rew_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
         rewards = {
-            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale,
-            "collision": (torch.tensor(self.col).float().to(self.device) * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor)).reshape(-1, 1)  * self.cfg.col_reward_scale,
+            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
+            "collision": (torch.tensor(self.col).float().to(self.device) * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor_small)).reshape(-1, 1)  * self.cfg.col_reward_scale,
             "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
-            "goal": (self.coverage_ratio_reward >= self.cfg.goal).int() * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor_goal).reshape(-1, 1) * 0.,
-            "fg": (fg_ratio<0.3).int() * torch.exp(-fg_ratio*factor) * -0.1,
+            "goal": (self.coverage_ratio_reward >= self.cfg.goal).int() * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor_small).reshape(-1, 1) * 50. * rew_mask,
+            "fg": (fg_ratio<0.25).int() * torch.exp(-fg_ratio*factor) * -0.1 * rew_mask,
             "sub_goal": sub_goal_reward.int() * 5. * 0
         }
         #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
@@ -584,8 +585,8 @@ class QuadcopterEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
        
         # TODO enable this when using goal reward
-        #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
-        done = self.env_step.to(self.device) >= self.cfg.total_img - 1
+        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
+        #done = self.env_step.to(self.device) >= self.cfg.total_img - 1
 
         if self.cfg.preplan:
             done = self.env_step.to(self.device) >= self.cfg.total_img - 1
