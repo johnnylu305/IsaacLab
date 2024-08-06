@@ -60,7 +60,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     vis_pointcloud = False
     save_env_ids = [0, 1]
     save_img_freq = 30 #10
-    random_initial = False
+    random_initial = False #False
 
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 60 #30 # in meter, 2 cells is one unit
@@ -75,7 +75,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # obv
     img_t = 2 
     total_img = 50 #50
-    goal = 0.92
+    goal = 0.9 #0.92
 
     # occ grid
     # TODO need to tune free threshold
@@ -145,7 +145,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
              #focus_distance=1.0, # in m 
              horizontal_aperture=24., # in mm 
              #clipping_range=(0.1, 20.0) # near and far plane in meter
-             clipping_range=(0.1, 60.0) # near and far plane in meter
+             clipping_range=(0.5, 60.0) # near and far plane in meter
          ),
          width=camera_w,
          height=camera_h,

@@ -251,8 +251,9 @@ class QuadcopterEnv(DirectRLEnv):
         self._actions = actions.clone()
         self._xyz = self._actions[:, :3]
         # TODO tune z
-        # x: -10~10, y: -10~10, z: 0~14
-        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0, self.cfg.env_size/2.0, 0.6*self.cfg.env_size/4.0]).to(self.device)
+        # x: -9.5~9.5, y: -9.5~9.5, z: 0~14
+        # using 9.5 instead of 10 to avoid boundary case for collision detection
+        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 0.6*self.cfg.env_size/4.0]).to(self.device)
         #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([0, self.cfg.env_size/2.0, 0.6*self.cfg.env_size/4.0]).to(self.device)
 
         self._yaw = self._actions[:,3]*torch.pi
@@ -394,23 +395,7 @@ class QuadcopterEnv(DirectRLEnv):
         camera_pos = self._camera.data.pos_w.clone()
         camera_quat = self._camera.data.quat_w_ros.clone()
         
-        # save images
-        if self.cfg.save_img:
-            for i in self.cfg.save_env_ids:
-                if i >= self.num_envs:
-                    break
-                if self.env_episode[i]%self.cfg.save_img_freq != 0:
-                    continue
-                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
-                os.makedirs(root_path, exist_ok=True)
-                #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
-                x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
-                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}.png'),
-                           np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
-                           cmap='gray')
-                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}.png'),
-                           rgb_image[i].detach().cpu().numpy().astype(np.uint8))
-        
+                
         #depth_image = dis_to_z(depth_image, intrinsic_matrix)
         # prevent inf
         depth_image = torch.clamp(depth_image, 0, self.cfg.env_size*2)
@@ -452,7 +437,7 @@ class QuadcopterEnv(DirectRLEnv):
             mask = mask_x & mask_y & mask_z
             
             offset = torch.tensor([self.cfg.env_size/2, self.cfg.env_size/2,0]).to(self.device)
-            if points_3d_world[i][mask].shape[0] > 0:
+            if not self.col[i] and points_3d_world[i][mask].shape[0] > 0:
                 ratio = self.cfg.grid_size/self.cfg.env_size
                 self.grid.trace_path_and_update(i, torch.floor(self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio, 
                                                 torch.floor((points_3d_world[i]-self._terrain.env_origins[i]+offset))*ratio)
@@ -510,6 +495,25 @@ class QuadcopterEnv(DirectRLEnv):
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
         self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
 
+        # save images
+        if self.cfg.save_img:
+            for i in self.cfg.save_env_ids:
+                if i >= self.num_envs:
+                    break
+                if self.env_episode[i]%self.cfg.save_img_freq != 0:
+                    continue
+                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                os.makedirs(root_path, exist_ok=True)
+                #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
+                x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
+                rew = self.coverage_ratio_reward[i, 0] 
+                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
+                           np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
+                           cmap='gray')
+                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
+                           rgb_image[i].detach().cpu().numpy().astype(np.uint8))
+ 
+
     def _get_observations(self) -> dic:       
         # pose: N, T, 7
         # img: N, T', H, W, 3
@@ -555,12 +559,22 @@ class QuadcopterEnv(DirectRLEnv):
         factor = torch.ones(1).to(self.device) * 2
         factor_small = torch.ones(1).to(self.device) * 1
         rew_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
+        """
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
             "collision": (torch.tensor(self.col).float().to(self.device) * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor_small)).reshape(-1, 1)  * self.cfg.col_reward_scale,
             "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
             "goal": (self.coverage_ratio_reward >= self.cfg.goal).int() * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor_small).reshape(-1, 1) * 50. * rew_mask,
             "fg": (fg_ratio<0.25).int() * torch.exp(-fg_ratio*factor) * -0.1 * rew_mask,
+            "sub_goal": sub_goal_reward.int() * 5. * 0
+        }
+        """
+        rewards = {
+            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
+            "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
+            "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
+            "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
+            "fg": (fg_ratio<0.2).int().reshape(-1, 1) * -0.3 * rew_mask * 0,
             "sub_goal": sub_goal_reward.int() * 5. * 0
         }
         #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
@@ -730,6 +744,7 @@ class QuadcopterEnv(DirectRLEnv):
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
             occ_path = os.path.join(path, "fill_occ_set.pkl")
             # To load the occupied voxels from the file
+            # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)    
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
@@ -780,43 +795,108 @@ class QuadcopterEnv(DirectRLEnv):
             # TODO: may need to move possible_positions = [] to for loop
             #possible_positions = []
             random_position_tensor = torch.empty((0, 3), dtype=torch.int)
-            for env_id in env_ids:
+            neighbor_offsets = [ (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1),
+                                 (1, 1, 0), (1, -1, 0), (-1, 1, 0), (-1, -1, 0),
+                                 (1, 0, 1), (1, 0, -1), (-1, 0, 1), (-1, 0, -1),
+                                 (0, 1, 1), (0, 1, -1), (0, -1, 1), (0, -1, -1),
+                                 (1, 1, 1), (1, 1, -1), (1, -1, 1), (1, -1, -1),
+                                 (-1, 1, 1), (-1, 1, -1), (-1, -1, 1), (-1, -1, -1)]
+
+            # Settings for the occupancy grid
+            org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
+            org_z = 0
+            cell_size = self.cfg.env_size/self.cfg.grid_size # meters per cell
+            slice_height = self.cfg.env_size/self.cfg.grid_size  # height of each slice in meters
+
+            for k, env_id in enumerate(env_ids):
                 possible_positions = []
+                """
                 for x in range(-self.cfg.env_size//2, self.cfg.env_size//2):
                     for y in range(-self.cfg.env_size//2, self.cfg.env_size//2):
+                        flag = True
                         for z in range(0, self.cfg.env_size):
                             pos = (x, y, z)
-                            #import pdb; pdb.set_trace()
                             if pos not in self.occs[env_id]:
-                                possible_positions.append(pos)
-                print(random.choice(possible_positions))
+                                for dx, dy, dz in neighbor_offsets:
+                                    neighbor_pos = (x + dx, y + dy, z + dz)
+                                    if neighbor_pos in self.occs[env_id]:
+                                        flag = False
+                                        break
+                                if flag:
+                                    possible_positions.append(pos)
+                """
+                flag = True
+                while flag:
+                    # Randomly sample a point within the range
+                    x = random.randint(-self.cfg.env_size//2+1, self.cfg.env_size//2-1)
+                    y = random.randint(-self.cfg.env_size//2+1, self.cfg.env_size//2-1)
+                    z = random.randint(1, int(self.cfg.env_size/2*0.6))
+                    pos = (x, y, z)
+
+                    x += org_x
+                    y += org_y
+                    z += org_z
+
+                    # to voxel id
+                    x = np.floor(x/cell_size).astype(np.int32)
+                    y = np.floor(y/cell_size).astype(np.int32)
+                    z = np.floor(z/slice_height).astype(np.int32)
+
+
+                    vox_pos = (x, y, z)
+                
+                    # Check if the point and its neighbors are all free voxels
+                    if vox_pos not in self.occs[env_id]:
+                        possible_positions.append(pos)
+                        flag = False
+                        """
+                        for dx, dy, dz in neighbor_offsets:
+                            neighbor_pos = (x + dx, y + dy, z + dz)
+                            if neighbor_pos in self.occs[env_id]:
+                                flag = False
+                                break
+                        if flag:
+                            possible_positions.append(pos)
+                            flag = False
+                        else:
+                            flag = True
+                        """           
+                        
+                        #print(random.choice(possible_positions))
                 random_position = random.choice(possible_positions)
                 #random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
                 random_position_tensor = torch.tensor(random_position).unsqueeze(0)
                 yaw, pitch = compute_orientation(random_position)
                 #print('pitch', pitch)
-                target_orientation = rot_utils.euler_angles_to_quats(np.array([0, -pitch, yaw]), degrees=False)
+                target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
                 target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
 
-                default_root_state[:,:3] =  random_position_tensor
-                default_root_state[:,3:7] = target_orientation        
-                default_root_state[:, :3] += self._terrain.env_origins[env_id]
+                default_root_state[k:k+1, :3] =  random_position_tensor
+                default_root_state[k:k+1, 3:7] = target_orientation        
+                default_root_state[k:k+1, :3] += self._terrain.env_origins[env_id]
                 self.default_root_state = default_root_state
-
-                self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_id)
-                self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_id)
-                
                 # TODO assume initial pitch is 0 for current version, yaw, xyz is the same
+                target_orientation = rot_utils.euler_angles_to_quats(np.array([0, -pitch, yaw]), degrees=False)
+                target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
                 orientation_camera = convert_orientation_convention(target_orientation.float(), origin="world", target="ros")
+
+                x_new = default_root_state[k:k+1, 0] + self.cfg.camera_offset[0] * np.cos(yaw) - self.cfg.camera_offset[1] * np.sin(yaw)
+                y_new = default_root_state[k:k+1, 1] + self.cfg.camera_offset[0] * np.sin(yaw) + self.cfg.camera_offset[1] * np.cos(yaw)
+                z_new = default_root_state[k:k+1, 2] + self.cfg.camera_offset[2]
+                new_positions = torch.stack([x_new, y_new, z_new], dim=1)
+
                 #import pdb; pdb.set_trace()
                 #orientation_camera = orientation_camera.repeat(len(env_ids), 1)
                 # TODO May need to set robot positions
-                self._camera.set_world_poses(random_position_tensor.cuda()+self._terrain.env_origins[env_id], orientation_camera, [env_id])
-                self.robot_pos[env_id] = target_position + self._terrain.env_origins[env_ids]
-                self.robot_ori[env_id, 0] = pitch
+                self._camera.set_world_poses(new_positions, orientation_camera, [env_id])
+                self.robot_pos[env_id] = random_position_tensor.to(self.device) + self._terrain.env_origins[env_id]
+                self.robot_ori[env_id, 0] = -pitch
                 self.robot_ori[env_id, 1] = yaw
 
-        #import pdb; pdb.set_trace()
+            self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
+            self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
+
+        #import pdb; pdb.set_trace()1
         #self._camera.set_world_poses_from_view(random_position_tensor.cuda()+self._terrain.env_origins[env_ids], self._terrain.env_origins[env_ids], env_ids)
         #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
         #slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters        
