@@ -18,19 +18,20 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
         # We need to know size of the output of this extractor,
         # so go over all the spaces and compute output feature sizes
         for key, subspace in observation_space.spaces.items():
+            """
             if key == "pose_step":
                 extractors[key] = nn.Sequential(
                                     nn.Linear(subspace.shape[0], 32),
                                     nn.LeakyReLU(),
                                     )
-                """
-                extractors[key] = nn.Sequential(
-                                    nn.Linear(subspace.shape[0], 64),
-                                    nn.LeakyReLU(),
-                                    nn.Linear(64, 64),
-                                    nn.LeakyReLU(),
-                                    )
-                """
+               
+                #extractors[key] = nn.Sequential(
+                #                    nn.Linear(subspace.shape[0], 64),
+                #                    nn.LeakyReLU(),
+                #                    nn.Linear(64, 64),
+                #                    nn.LeakyReLU(),
+                #                    )
+                
                 total_concat_size += 32
             if key == "img":
                 small_net = True
@@ -62,6 +63,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                                                     nn.LeakyReLU()
                                                 )
                     total_concat_size += 256   
+            """
             if key == "occ":
                 small_net = True
                 if small_net:

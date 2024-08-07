@@ -17,7 +17,13 @@ args_cli = parser.parse_args()
 
 def add_neighbors(occupied_voxels, grid_shape):
     # Directions for 6-connected neighbors in a 3D grid
-    directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
+    directions = [ (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1),
+                     (1, 1, 0), (1, -1, 0), (-1, 1, 0), (-1, -1, 0),
+                     (1, 0, 1), (1, 0, -1), (-1, 0, 1), (-1, 0, -1),
+                     (0, 1, 1), (0, 1, -1), (0, -1, 1), (0, -1, -1),
+                     (1, 1, 1), (1, 1, -1), (1, -1, 1), (1, -1, -1),
+                     (-1, 1, 1), (-1, 1, -1), (-1, -1, 1), (-1, -1, -1)]
+
     x_dim, y_dim, z_dim = grid_shape
     neighbors = set()
 
@@ -36,7 +42,7 @@ def add_neighbors(occupied_voxels, grid_shape):
 def find_occupied_voxels(grid):
     # Ensure grid is a numpy array
     grid = np.array(grid)
-    z_dim, x_dim, y_dim = grid.shape
+    x_dim, y_dim, z_dim = grid.shape
     
     # Directions for 6-connected neighbors in a 3D grid
     directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
@@ -48,18 +54,18 @@ def find_occupied_voxels(grid):
         visited.add(start)
         
         while queue:
-            z, x, y = queue.popleft()
-            for dz, dx, dy in directions:
-                nz, nx, ny = z + dz, x + dx, y + dy
+            x, y, z = queue.popleft()
+            for dx, dy, dz in directions:
+                nx, ny, nz = x + dx, y + dy, z + dz
                 if 0 <= nx < x_dim and 0 <= ny < y_dim and 0 <= nz < z_dim:
-                    if grid[nz, nx, ny] == 0 and (nz, nx, ny) not in visited:
-                        visited.add((nz, nx, ny))
-                        queue.append((nz, nx, ny))
+                    if grid[nx, ny, nz] == 0 and (nx, ny, nz) not in visited:
+                        visited.add((nx, ny, nz))
+                        queue.append((nx, ny, nz))
         
         return visited
     
     # Start BFS from an exterior voxel
-    exterior_empty_voxels = bfs((z_dim-1, x_dim-1, y_dim-1))
+    exterior_empty_voxels = bfs((x_dim-1, y_dim-1, z_dim-1))
     
     occupied_voxels = set()
     
@@ -67,28 +73,30 @@ def find_occupied_voxels(grid):
     for z in range(z_dim):
         for x in range(x_dim):
             for y in range(y_dim):
-                if grid[z, x, y] == 1 or (grid[z, x, y] == 0 and (z, x, y) not in exterior_empty_voxels):
-                    occupied_voxels.add((z, x, y))
+                if grid[x, y, z] == 1 or (grid[x, y, z] == 0 and (x, y, z) not in exterior_empty_voxels):
+                    #occupied_voxels.add((z, x, y))
+                    # new version
+                    occupied_voxels.add((x, y, z))
     
     return occupied_voxels
 
 def fill_grid(path):
     hollow_occ = np.load(path)
     # x,y,z -> z,x,y
-    hollow_occ = np.where(hollow_occ==2, 1, 0).transpose((2, 0, 1))
+    hollow_occ = np.where(hollow_occ==2, 1, 0)#.transpose((2, 0, 1))
     #print(hollow_occ[0])
     #exit()
     #print(hollow_occ.shape, np.sum(hollow_occ), hollow_occ[0, 0, 0])
-    z_len, x_len, y_len = hollow_occ.shape
+    x_len, y_len, z_len = hollow_occ.shape
     assert hollow_occ[-1, -1, -1] == 0
     occ_set = find_occupied_voxels(hollow_occ)
     print(np.sum(hollow_occ), len(occ_set))
-    #occ_set = add_neighbors(occ_set, hollow_occ.shape)
-    #print(len(occ_set))
+    occ_set_dilated = add_neighbors(occ_set.copy(), hollow_occ.shape)
+    print("set", len(occ_set), len(occ_set_dilated))
     output = os.path.join(os.path.split(path)[0], "fill_occ_set.pkl")
     # Save the occupied voxels to a file
     with open(output, 'wb') as file:
-        pickle.dump(occ_set, file)
+        pickle.dump(occ_set_dilated, file)
     return occ_set, z_len, x_len, y_len
 
 def is_hollow(x, y, z, occ_grid, min_bound, max_bound):
@@ -104,7 +112,7 @@ def is_hollow(x, y, z, occ_grid, min_bound, max_bound):
                 min_bound[1] <= vy <= max_bound[1] and
                 min_bound[2] <= vz <= max_bound[2]):
             return False
-        if (vz, vx, vy) not in occ_grid:
+        if (vx, vy, vz) not in occ_grid:
             return False
     
     return True
@@ -113,7 +121,7 @@ def convert_to_hollow(occ_grid, min_bound, max_bound):
     hollowed_grid = set()
     
     for voxel in occ_grid:
-        z, x, y = voxel
+        x, y, z = voxel
         if not is_hollow(x, y, z, occ_grid, min_bound, max_bound):
             hollowed_grid.add(voxel)
     
@@ -126,11 +134,11 @@ def map_to_3d_grid(hollow_set, min_bound, max_bound, path):
     z_dim = max_bound[2] - min_bound[2] 
     
     # Initialize the grid with zeros
-    grid = np.zeros((z_dim, x_dim, y_dim), dtype=int)
+    grid = np.zeros((x_dim, y_dim, z_dim), dtype=int)
     
     # Map the hollow set to the grid
-    for (z, x, y) in hollow_set:
-        grid[z - min_bound[0], x - min_bound[1], y - min_bound[2]] = 1
+    for (x, y, z) in hollow_set:
+        grid[x - min_bound[0], y - min_bound[1], z - min_bound[2]] = 1
 
     output = os.path.join(os.path.split(path)[0], "hollow_occ.npy")
     np.save(output, grid)
@@ -140,25 +148,25 @@ def map_to_3d_grid(hollow_set, min_bound, max_bound, path):
 def save_face(scene_path, occ_set):
     hollow_occ = np.load(scene_path)
     # x,y,z -> z,x,y
-    hollow_occ = np.where(hollow_occ == 2, 1, 0).transpose((2, 0, 1))
+    hollow_occ = np.where(hollow_occ == 2, 1, 0)#.transpose((2, 0, 1))
     
-    Z, X, Y = hollow_occ.shape
-    face_visibility = np.zeros((Z, X, Y, 6), dtype=bool)
+    X, Y, Z = hollow_occ.shape
+    face_visibility = np.zeros((X, Y, Z, 6), dtype=bool)
     
     faces = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
     
-    def is_visible(z, x, y, dz, dx, dy):
-        nz, nx, ny = z + dz, x + dx, y + dy
+    def is_visible(x, y, z, dx, dy, dz):
+        nx, ny, nz = x + dx, y + dy, z + dz
         if 0 <= nz < Z and 0 <= nx < X and 0 <= ny < Y:
-            return (nz, nx, ny) not in occ_set
+            return (nx, ny, nz) not in occ_set
         return True
     
-    for z, x, y in occ_set:
-        if hollow_occ[z, x, y] == 1:
-            for n, (dz, dx, dy) in enumerate(faces):
-                face_visibility[z, x, y, n] = is_visible(z, x, y, dz, dx, dy)
+    for x, y, z in occ_set:
+        if hollow_occ[x, y, z] == 1:
+            for n, (dx, dy, dz) in enumerate(faces):
+                face_visibility[x, y, z, n] = is_visible(x, y, z, dx, dy, dz)
 
-    face_visibility = face_visibility.transpose((1, 2, 0, 3))
+    face_visibility = face_visibility#.transpose((1, 2, 0, 3))
     output = os.path.join(os.path.split(scene_path)[0], "faces.npy")
     np.save(output, face_visibility)
     return face_visibility
@@ -179,7 +187,7 @@ def vis_face_and_voxel(scene_path, face_vis):
             for z in range(Z):
                 if hollow_occ[x, y, z] == 1:
                     voxel_list.append([x, y, z])
-                    for n, (dz, dx, dy) in enumerate(faces):
+                    for n, (dx, dy, dz) in enumerate(faces):
                         if face_vis[x, y, z, n]:
                             normal_list.append([x + 0.5 * dx, y + 0.5 * dy, z + 0.5 * dz, dx, dy, dz])
     

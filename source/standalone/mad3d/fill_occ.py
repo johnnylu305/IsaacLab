@@ -16,7 +16,13 @@ args_cli = parser.parse_args()
 
 def add_neighbors(occupied_voxels, grid_shape):
     # Directions for 6-connected neighbors in a 3D grid
-    directions = [(-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1)]
+    directions = [ (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1),
+                     (1, 1, 0), (1, -1, 0), (-1, 1, 0), (-1, -1, 0),
+                     (1, 0, 1), (1, 0, -1), (-1, 0, 1), (-1, 0, -1),
+                     (0, 1, 1), (0, 1, -1), (0, -1, 1), (0, -1, -1),
+                     (1, 1, 1), (1, 1, -1), (1, -1, 1), (1, -1, -1),
+                     (-1, 1, 1), (-1, 1, -1), (-1, -1, 1), (-1, -1, -1)]
+
     x_dim, y_dim, z_dim = grid_shape
     neighbors = set()
 
@@ -67,7 +73,9 @@ def find_occupied_voxels(grid):
         for x in range(x_dim):
             for y in range(y_dim):
                 if grid[z, x, y] == 1 or (grid[z, x, y] == 0 and (z, x, y) not in exterior_empty_voxels):
-                    occupied_voxels.add((z, x, y))
+                    #occupied_voxels.add((z, x, y))
+                    # new version
+                    occupied_voxels.add((x, y, z))
     
     return occupied_voxels
 
@@ -78,12 +86,12 @@ def fill_grid(path):
     assert hollow_occ[-1, -1, -1] == 0
     occ_set = find_occupied_voxels(hollow_occ)
     print(np.sum(hollow_occ), len(occ_set))
-    #occ_set = add_neighbors(occ_set, hollow_occ.shape)
+    occ_set_dilated = add_neighbors(occ_set.copy(), hollow_occ.shape)
     #print(len(occ_set))
     output = os.path.join(os.path.split(path)[0], "fill_occ_set.pkl")
     # Save the occupied voxels to a file
     with open(output, 'wb') as file:
-        pickle.dump(occ_set, file)
+        pickle.dump(occ_set_dilated, file)
     return occ_set, z_len, x_len, y_len
 
 def is_hollow(x, y, z, occ_grid, min_bound, max_bound):
@@ -108,7 +116,7 @@ def convert_to_hollow(occ_grid, min_bound, max_bound):
     hollowed_grid = set()
     
     for voxel in occ_grid:
-        z, x, y = voxel
+        x, y, z = voxel
         if not is_hollow(x, y, z, occ_grid, min_bound, max_bound):
             hollowed_grid.add(voxel)
     
@@ -121,11 +129,11 @@ def map_to_3d_grid(hollow_set, min_bound, max_bound, path):
     z_dim = max_bound[2] - min_bound[2] 
     
     # Initialize the grid with zeros
-    grid = np.zeros((z_dim, x_dim, y_dim), dtype=int)
+    grid = np.zeros((x_dim, y_dim, z_dim), dtype=int)
     
     # Map the hollow set to the grid
-    for (z, x, y) in hollow_set:
-        grid[z - min_bound[0], x - min_bound[1], y - min_bound[2]] = 1
+    for (x, y, z) in hollow_set:
+        grid[x - min_bound[0], y - min_bound[1], z - min_bound[2]] = 1
 
     output = os.path.join(os.path.split(path)[0], "hollow_occ.npy")
     np.save(output, grid)
@@ -141,7 +149,7 @@ def main():
         occ_set, z_len, x_len, y_len = fill_grid(scene_path)
         hollow_set = convert_to_hollow(occ_set, min_bound=[0, 0, 0], max_bound=[x_len, y_len, z_len])
         map_to_3d_grid(hollow_set, [0, 0, 0], [x_len, y_len, z_len], scene_path)
-        exit()
+        #exit()
         #print(scene_path)
 
 if __name__=="__main__":
