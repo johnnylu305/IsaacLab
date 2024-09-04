@@ -59,8 +59,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     vis_occ = False
     vis_pointcloud = False
     save_env_ids = [0, 1]
-    save_img_freq = 30 #10
-    random_initial = False #False
+    save_img_freq = 300 #10
+    random_initial = True #False
 
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 60 #30 # in meter, 2 cells is one unit
@@ -104,7 +104,6 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1/50, # physical simulation step
         disable_contact_processing=True,
-        #physx=sim_utils.PhysxCfg(use_gpu=True), # with use_gpu, the buffer cannot grow dynamically
         physx=sim_utils.PhysxCfg(), # with use_gpu, the buffer cannot grow dynamically
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -117,7 +116,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         enable_scene_query_support=False, # disable collision query
         #render_interval=decimation
     )
-
+    sim: SimulationCfg = SimulationCfg(dt=0.01, device="cuda:0")
     # ground	
     terrain = TerrainImporterCfg(
         prim_path="/World/ground",
@@ -134,13 +133,24 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     
     # robot
     robot: ArticulationCfg = CRAZYFLIE_CFG
-
+    '''
+    camera: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=(-7.0, 0.0, 3.0), rot=(0.9945, 0.0, 0.1045, 0.0), convention="world"),
+        data_types=["rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 20.0)
+        ),
+        width=80,
+        height=80,
+    )
+    '''
     # sensor    
     camera: CameraCfg = CameraCfg(
          prim_path="/World/envs/env_.*/Camera",
          offset=CameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
          update_period=0, # update every physical step
-         data_types=["rgb", "distance_to_image_plane"],
+         data_types=["distance_to_image_plane"],
          spawn=sim_utils.PinholeCameraCfg(
              focal_length=13.8, # in cm
              #focus_distance=1.0, # in m 
@@ -151,7 +161,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
          width=camera_w,
          height=camera_h,
     )
-
+    
     #camera: TiledCameraCfg = TiledCameraCfg(
     #    prim_path="/World/envs/env_.*/Camera",
     #    offset=TiledCameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
@@ -169,7 +179,9 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     #)
 
     # setup interactive scene for rl training
-    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=num_envs, 
-                                                     env_spacing=env_spacing,
-                                                     lazy_sensor_update=False, # update sensor data every time
-                                                     replicate_physics=True)
+    scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=num_envs, env_spacing=20.0, replicate_physics=True)
+
+    # scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=num_envs, 
+    #                                                  env_spacing=env_spacing,
+    #                                                  lazy_sensor_update=False, # update sensor data every time
+    #                                                  replicate_physics=True)

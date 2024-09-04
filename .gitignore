@@ -2,8 +2,8 @@ Occ_saved/*
 Set_C_converted/*
 camera_image
 
-*.png
-*.pyc
+**/*.png
+**/*.pyc
 
 ## C++
 **/cmake-build*/

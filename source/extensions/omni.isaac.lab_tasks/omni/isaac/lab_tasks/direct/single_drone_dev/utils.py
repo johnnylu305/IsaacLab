@@ -202,7 +202,7 @@ class OccupancyGrid:
         """
         Trace the path from the camera to each point using Bresenham's algorithm and update the grid.
         """
-        camera_position = camera_position.clone().detach()
+        camera_position = torch.tensor(camera_position).cuda()
 
         end_pts = (camera_position).unsqueeze(0).long()
 
