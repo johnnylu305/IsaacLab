@@ -21,6 +21,7 @@ from omni.isaac.lab.utils.warp.kernels import reshape_tiled_image
 
 from ..sensor_base import SensorBase
 from .camera import Camera
+from .utils import convert_orientation_convention
 
 if TYPE_CHECKING:
     from .camera_cfg import TiledCameraCfg
@@ -103,6 +104,7 @@ class TiledCamera(Camera):
             env_ids = slice(None)
         # reset the frame count
         self._frame[env_ids] = 0
+        self._update_poses(env_ids)
 
     """
     Implementation.
@@ -179,7 +181,7 @@ class TiledCamera(Camera):
     def _update_buffers_impl(self, env_ids: Sequence[int]):
         # Increment frame count
         self._frame[env_ids] += 1
-
+        self._update_poses(env_ids)
         # Extract the flattened image buffer
         tiled_data_buffer = self._annotator.get_data()
         if isinstance(tiled_data_buffer, np.ndarray):

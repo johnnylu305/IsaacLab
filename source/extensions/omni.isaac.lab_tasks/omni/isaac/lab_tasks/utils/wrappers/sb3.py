@@ -23,11 +23,14 @@ import numpy as np
 import torch
 import torch.nn as nn  # noqa: F401
 from typing import Any
+import sys
 
 from stable_baselines3.common.utils import constant_fn
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, VecEnvStepReturn
 
 from omni.isaac.lab.envs import DirectRLEnv, ManagerBasedRLEnv
+sys.path.append('./')
+from source.standalone.mad3d.sb3_encoder import CustomCombinedExtractor
 
 """
 Configuration Parser.
@@ -150,6 +153,7 @@ class Sb3VecEnvWrapper(VecEnv):
         #   we set it to some high value here. Maybe this is not general but something to think about.
         observation_space = self.unwrapped.single_observation_space["policy"]
         action_space = self.unwrapped.single_action_space
+
         if isinstance(action_space, gym.spaces.Box) and not action_space.is_bounded("both"):
             action_space = gym.spaces.Box(low=-100, high=100, shape=action_space.shape)
 
@@ -325,7 +329,7 @@ class Sb3VecEnvWrapper(VecEnv):
                     # only log this data for episodes that are terminated
                     if infos[idx]["episode"] is not None:
                         for sub_key, sub_value in value.items():
-                            infos[idx]["episode"][sub_key] = sub_value
+                            infos[idx]["episode"][sub_key] = sub_value[idx]
                 else:
                     infos[idx][key] = value[idx]
             # add information about terminal observation separately

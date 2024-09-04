@@ -30,7 +30,7 @@ from omni.isaac.lab.utils.timer import Timer
 from .common import VecEnvObs, VecEnvStepReturn
 from .direct_rl_env_cfg import DirectRLEnvCfg
 from .ui import ViewportCameraController
-
+import time
 
 class DirectRLEnv(gym.Env):
     """The superclass for the direct workflow to design environments.
@@ -290,6 +290,7 @@ class DirectRLEnv(gym.Env):
         # add action noise
         if self.cfg.action_noise_model:
             action = self._action_noise_model.apply(action)
+            #action = self._action_noise_model.apply(action.clone())
 
         # process actions
         self._pre_physics_step(action)
@@ -303,6 +304,7 @@ class DirectRLEnv(gym.Env):
             self._sim_step_counter += 1
             # set actions into buffers
             self._apply_action()
+
             # set actions into simulator
             self.scene.write_data_to_sim()
             # simulate

@@ -21,9 +21,11 @@ CRAZYFLIE_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/Crazyflie/cf2x.usd",
         rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
+            #disable_gravity=False,
+            disable_gravity=True, #originally was false
             max_depenetration_velocity=10.0,
             enable_gyroscopic_forces=True,
+            kinematic_enabled=False
         ),
         articulation_props=sim_utils.ArticulationRootPropertiesCfg(
             enabled_self_collisions=False,
@@ -33,6 +35,7 @@ CRAZYFLIE_CFG = ArticulationCfg(
             stabilization_threshold=0.001,
         ),
         copy_from_source=False,
+        activate_contact_sensors=True
     ),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.5),

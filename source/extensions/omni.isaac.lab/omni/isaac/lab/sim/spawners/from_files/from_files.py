@@ -18,7 +18,84 @@ from omni.isaac.lab.sim.utils import bind_physics_material, bind_visual_material
 
 if TYPE_CHECKING:
     from . import from_files_cfg
+import random
+import omni.isaac.lab.sim as sim_utils
+import re
 
+def spawn_from_multiple_usd_env_id(
+    prim_path_template: str,
+    env_ids: list,
+    my_asset_list: list[from_files_cfg.UsdFileCfg],
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+) -> list[Usd.Prim]:
+    source_prim_paths = []
+
+    for env_id in env_ids:
+        prim_path = prim_path_template.replace(".*", f"{env_id}")
+        root_path, asset_path = prim_path.rsplit("/", 1)
+
+        is_regex_expression = re.match(r"^[a-zA-Z0-9/_]+$", root_path) is None
+
+        if is_regex_expression and root_path:
+            source_prim_paths = sim_utils.find_matching_prim_paths(root_path)
+            if not source_prim_paths:
+                raise RuntimeError(
+                    f"Unable to find source prim path: '{root_path}'. Please create the prim before spawning."
+                )
+        else:
+            source_prim_paths.append(root_path)
+            #source_prim_paths = [root_path]
+  
+    asset_list = []
+    for source_prim_path in source_prim_paths:
+        full_prim_path = f"{source_prim_path}/{asset_path}"
+        cfg = random.choice(my_asset_list)
+        asset_list.append(cfg.usd_path)
+        prim = _spawn_from_usd_file(full_prim_path, cfg.usd_path, cfg, translation, orientation)
+        
+
+    return prim, asset_list
+        
+def spawn_from_multiple_usd(
+    prim_path: str,
+    my_asset_list: list[from_files_cfg.UsdFileCfg],
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+) -> Usd.Prim:
+        # resolve: {SPAWN_NS}/AssetName
+        # note: this assumes that the spawn namespace already exists in the stage
+        root_path, asset_path = prim_path.rsplit("/", 1)
+        #check if input is a regex expression
+        #note: a valid prim path can only contain alphanumeric characters, underscores, and forward slashes
+        is_regex_expression = re.match(r"^[a-zA-Z0-9/_]+$", root_path) is None
+ 
+        # resolve matching prims for source prim path expression
+        if is_regex_expression and root_path != "":
+            source_prim_paths = sim_utils.find_matching_prim_paths(root_path)
+            # if no matching prims are found, raise an error
+            if len(source_prim_paths) == 0:
+                raise RuntimeError(
+                    f"Unable to find source prim path: '{root_path}'. Please create the prim before spawning."
+                )
+        else:
+            source_prim_paths = [root_path]
+ 
+        # resolve prim paths for spawning
+        prim_paths = [f"{source_prim_path}/{asset_path}" for source_prim_path in source_prim_paths]
+        # spawn asset from the given usd file
+        
+        asset_list = []
+        for prim_path in prim_paths:
+            #sample the asset config to load
+            #print(my_asset_list)
+            cfg = random.choice(my_asset_list)
+            asset_list.append(cfg.usd_path)
+            #print(cfg)
+            # load the asset
+            prim = _spawn_from_usd_file(prim_path, cfg.usd_path, cfg, translation, orientation)
+        
+        return prim, asset_list
 
 @clone
 def spawn_from_usd(
@@ -57,6 +134,8 @@ def spawn_from_usd(
         FileNotFoundError: If the USD file does not exist at the given path.
     """
     # spawn asset from the given usd file
+    print(prim_path)
+    print(cfg.usd_path)
     return _spawn_from_usd_file(prim_path, cfg.usd_path, cfg, translation, orientation)
 
 
