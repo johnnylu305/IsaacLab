@@ -3,7 +3,6 @@
 
 [Installation guideline](https://docs.omniverse.nvidia.com/isaacsim/latest/installation/install_workstation.html)
 
-You can open Omniverse Launcher and IsaacSim by clicking omniverse-launcher-linux.AppImage
 
 # Donwload and setup MAD3D IsaacLab 
 The master branch of MAD3D IsaacLab should follow the official IsaacLab
