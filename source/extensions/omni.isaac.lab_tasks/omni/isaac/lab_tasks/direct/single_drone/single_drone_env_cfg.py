@@ -104,7 +104,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1/50, # physical simulation step
         disable_contact_processing=True,
-        #physx=sim_utils.PhysxCfg(use_gpu=True), # with use_gpu, the buffer cannot grow dynamically
+        #use_fabric=False, device = 'cpu', use_gpu_pipeline=False,
         physx=sim_utils.PhysxCfg(), # with use_gpu, the buffer cannot grow dynamically
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -136,37 +136,37 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     robot: ArticulationCfg = CRAZYFLIE_CFG
 
     # sensor    
-    camera: CameraCfg = CameraCfg(
-         prim_path="/World/envs/env_.*/Camera",
-         offset=CameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
-         update_period=0, # update every physical step
-         data_types=["rgb", "distance_to_image_plane"],
-         spawn=sim_utils.PinholeCameraCfg(
-             focal_length=13.8, # in cm
-             #focus_distance=1.0, # in m 
-             horizontal_aperture=24., # in mm 
-             #clipping_range=(0.1, 20.0) # near and far plane in meter
-             clipping_range=(0.5, 60.0) # near and far plane in meter
-         ),
-         width=camera_w,
-         height=camera_h,
-    )
+#    camera: CameraCfg = CameraCfg(
+#         prim_path="/World/envs/env_.*/Camera",
+#         offset=CameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
+#         update_period=0, # update every physical step
+#         data_types=["rgb", "distance_to_image_plane"],
+#         spawn=sim_utils.PinholeCameraCfg(
+#             focal_length=13.8, # in cm
+#             #focus_distance=1.0, # in m 
+#             horizontal_aperture=24., # in mm 
+#             #clipping_range=(0.1, 20.0) # near and far plane in meter
+#             clipping_range=(0.5, 60.0) # near and far plane in meter
+#         ),
+#         width=camera_w,
+#         height=camera_h,
+#    )
 
-    #camera: TiledCameraCfg = TiledCameraCfg(
-    #    prim_path="/World/envs/env_.*/Camera",
-    #    offset=TiledCameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
-    #    update_period=0, # update every physical step
-    #    data_types=["rgb", "depth"],
-    #    spawn=sim_utils.PinholeCameraCfg(
-    #        focal_length=13.8, # in cm default 24, dji 1.38
-    #        #focus_distance=1.0, # in m 
-    #        horizontal_aperture=24., # in mm 
-    #        clipping_range=(0.2, 60.0) # near and far plane in meter
-    #    ),
-    #    width=camera_w,
-    #    height=camera_h,
-    #  
-    #)
+    camera: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
+        update_period=0, # update every physical step
+        data_types=["rgb", "depth"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=13.8, # in cm default 24, dji 1.38
+            #focus_distance=1.0, # in m 
+            horizontal_aperture=24., # in mm 
+            clipping_range=(0.5, 60.0) # near and far plane in meter
+        ),
+        width=camera_w,
+        height=camera_h,
+      
+    )
 
     # setup interactive scene for rl training
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=num_envs, 

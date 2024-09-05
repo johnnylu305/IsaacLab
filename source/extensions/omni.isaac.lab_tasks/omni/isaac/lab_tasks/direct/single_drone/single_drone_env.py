@@ -61,10 +61,13 @@ from omni.isaac.lab.markers import VisualizationMarkers
 import open3d as o3d 
 from .utils import merge_point_clouds
 import re
+import datetime
 
 cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
 cfg.markers["hit"].radius = 0.002
 pc_markers = VisualizationMarkers(cfg)
+
+image_time = datetime.datetime.now().time()
 
 class QuadcopterEnv(DirectRLEnv):
     cfg: QuadcopterEnvCfg
@@ -171,8 +174,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         # sensor
-        self._camera = Camera(self.cfg.camera)
-        #self._camera = TiledCamera(self.cfg.camera)
+        #self._camera = Camera(self.cfg.camera)
+        self._camera = TiledCamera(self.cfg.camera)
         self.scene.sensors["camera"] = self._camera
         
         self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
@@ -197,7 +200,7 @@ class QuadcopterEnv(DirectRLEnv):
             # Loop over each batch number
             for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
                 # Generate the path pattern for the glob function
-                path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD_new/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
                 # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
                 scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
             # only use one building
@@ -213,14 +216,14 @@ class QuadcopterEnv(DirectRLEnv):
             env_ids = torch.arange(self.cfg.num_envs)
             for i, scene in enumerate(scene_lists):
                 #TODO: change Occ to Occ_new_2000
-                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD_new", "Occ_new_2000"))
                 occ_path = os.path.join(path, "fill_occ_set.pkl")
                 # To load the occupied voxels from the file
                 with open(occ_path, 'rb') as file:
                     self.occs[env_ids[i]] = pickle.load(file)      
 
             for i, scene in enumerate(scene_lists):
-                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD_new", "Occ_new_2000"))           
                 occ_path = os.path.join(path, "occ.npy")
                 self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
 
@@ -360,16 +363,16 @@ class QuadcopterEnv(DirectRLEnv):
 
     def update_observations(self, env_ids=None):
         env_ids = [i for i in range(self.cfg.num_envs)] if env_ids is None else env_ids
-
         # get images
-        depth_image = self._camera.data.output["distance_to_image_plane"].clone()
-        #depth_image = self._camera.data.output["depth"][:,:,:,0].clone()
+        #depth_image = self._camera.data.output["distance_to_image_plane"].clone()
+        depth_image = self._camera.data.output["depth"][:,:,:,0].clone()
         rgb_image = self._camera.data.output["rgb"].clone()
        
- 
+        #import pdb; pdb.set_trace()
         for i in env_ids:
             self.obv_imgs[i][1] = self.obv_imgs[i][0]
-            self.obv_imgs[i][0] = rgb_image[i][:, :, :3] / 255.
+            #self.obv_imgs[i][0] = rgb_image[i][:, :, :3] / 255.
+            self.obv_imgs[i][0] = rgb_image[i][:, :, :3]
 
         # Settings for the occupancy grid
         org_x, org_y = self.cfg.env_size/2., self.cfg.env_size/2.
@@ -396,7 +399,7 @@ class QuadcopterEnv(DirectRLEnv):
         camera_quat = self._camera.data.quat_w_ros.clone()
         
                 
-        #depth_image = dis_to_z(depth_image, intrinsic_matrix)
+        depth_image = dis_to_z(depth_image, intrinsic_matrix)
         # prevent inf
         depth_image = torch.clamp(depth_image, 0, self.cfg.env_size*2)
         # make log odd occupancy grid
@@ -458,7 +461,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image',f'{image_time}', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -502,16 +505,22 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image',f'{image_time}', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
                 rew = self.coverage_ratio_reward[i, 0] 
                 plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
-                           np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
+                           depth_image[i].detach().cpu().numpy(),
                            cmap='gray')
                 plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
-                           rgb_image[i].detach().cpu().numpy().astype(np.uint8))
+                           rgb_image[i].detach().cpu().numpy())
+                           
+                #plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
+                #           np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
+                #           cmap='gray')
+                #plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
+                #           rgb_image[i].detach().cpu().numpy().astype(np.uint8))
  
 
     def _get_observations(self) -> dic:       
@@ -533,7 +542,7 @@ class QuadcopterEnv(DirectRLEnv):
         #print(obs["occ"][0, 0, :, :, :])
         observations = {"policy": obs}
        
-
+        
         return observations
 
     def _get_rewards(self) -> torch.Tensor:
@@ -741,13 +750,13 @@ class QuadcopterEnv(DirectRLEnv):
         # load occ set and gt
         for i, scene in enumerate(scene_lists):
             #TODO: chnage Occ to Occ_new_2000
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+            path, file = os.path.split(scene.replace("Raw_Rescale_USD_new", "Occ_new_2000"))
             occ_path = os.path.join(path, "fill_occ_set.pkl")
             # To load the occupied voxels from the file
             # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)    
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
+            path, file = os.path.split(scene.replace("Raw_Rescale_USD_new", "Occ_new_2000"))
             #print(path)
             occ_path = os.path.join(path, "occ.npy")
             self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
@@ -758,6 +767,7 @@ class QuadcopterEnv(DirectRLEnv):
         if not self.cfg.random_initial:
             target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
             yaw, pitch = compute_orientation(target_position)
+            yaw = yaw* -1
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
