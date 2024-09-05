@@ -61,6 +61,9 @@ from omni.isaac.lab.markers import VisualizationMarkers
 import open3d as o3d 
 from .utils import merge_point_clouds
 import re
+from datetime import datetime
+# Assuming you're using datetime for a timestamp and self.env_episode[i] is a valid list/index
+datetime_now = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
 cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
 cfg.markers["hit"].radius = 0.002
@@ -458,7 +461,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image', f'{datetime_now}', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -502,7 +505,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image', f'{datetime_now}', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
@@ -758,6 +761,7 @@ class QuadcopterEnv(DirectRLEnv):
         if not self.cfg.random_initial:
             target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
             yaw, pitch = compute_orientation(target_position)
+            yaw = yaw * -1.
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
