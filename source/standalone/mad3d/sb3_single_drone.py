@@ -54,6 +54,8 @@ class RewardLoggingCallback(BaseCallback):
         current_step = self.num_timesteps
         for i, info in enumerate(infos):
             episode_info = info['episode']
+            if i>2:
+                break
             if episode_info:
                 for key, value in episode_info.items():
                     if "Episode Reward" in key:

@@ -256,7 +256,15 @@ class QuadcopterEnv(DirectRLEnv):
         # TODO tune z
         # x: -9.5~9.5, y: -9.5~9.5, z: 0~14
         # using 9.5 instead of 10 to avoid boundary case for collision detection
-        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 0.6*self.cfg.env_size/4.0]).to(self.device)
+        r = self._actions[:, 0] * (self.cfg.env_size/1.5)
+        theta = self._actions[:, 1] * torch.pi
+        x = torch.mul(r,torch.cos(theta)).unsqueeze(1)
+        y = torch.mul(r,torch.sin(theta)).unsqueeze(1)
+        z = self._actions[:, 2].unsqueeze(1)
+        #import pdb; pdb.set_trace()
+        self._xyz = (torch.cat([x, y, z],dim=1) + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 0.6*self.cfg.env_size/4.0]).to(self.device)
+        
+        #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 0.6*self.cfg.env_size/4.0]).to(self.device)
         #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([0, self.cfg.env_size/2.0, 0.6*self.cfg.env_size/4.0]).to(self.device)
 
         self._yaw = self._actions[:,3]*torch.pi

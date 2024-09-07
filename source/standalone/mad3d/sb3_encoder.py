@@ -64,7 +64,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                                                     nn.LeakyReLU()
                                                 )
                     total_concat_size += 256   
-            
+            """
             if key == "occ":
                 small_net = True
                 if small_net:
@@ -98,7 +98,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                                                     nn.LeakyReLU(),
                                                   )
                 total_concat_size += 256
-            """
+            
             #if key == "env_step":
                 #extractors[key] = nn.Sequential(nn.Linear(1, 2))
                 #nn.Sequential(nn.Identity())
