@@ -60,7 +60,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     vis_pointcloud = False
     save_env_ids = [0, 1]
     save_img_freq = 30 #10
-    random_initial = False #False
+    random_initial = True #False
 
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 60 #30 # in meter, 2 cells is one unit
@@ -79,7 +79,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # occ grid
     # TODO need to tune free threshold
-    decrement = 0.2
+    decrement = 0.01 #0.2
     increment = 1.0
     max_log_odds = 10.
     min_log_odds = -10.
@@ -98,7 +98,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
 
     # reward scales
     occ_reward_scale = 30.0
-    col_reward_scale = -30.0 #-10.0
+    col_reward_scale = -1 #-30.0 #-10.0
 
     # simulation
     sim: SimulationCfg = SimulationCfg(

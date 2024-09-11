@@ -191,6 +191,10 @@ class QuadcopterEnv(DirectRLEnv):
         for i in range(self.num_envs):
             rescale_robot(f"/World/envs/env_{i}/Robot", robot_scale)
 
+        # grid for random initialization
+        self.goal_grid = np.ones((self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size))
+        self.init_vox_pos = np.zeros((self.num_envs, 3)).astype(np.int32)
+
         # scene
         if not self.cfg.preplan:
             scenes_path = []
@@ -458,7 +462,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweight_100', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -502,7 +506,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweight_100', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
@@ -602,10 +606,15 @@ class QuadcopterEnv(DirectRLEnv):
         done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
         #done = self.env_step.to(self.device) >= self.cfg.total_img - 1
 
+        for i in range(self.num_envs):
+            if self.coverage_ratio_reward.squeeze()[i] >= self.cfg.goal:
+                x, y, z = self.init_vox_pos[i]
+                self.goal_grid[x, y, z] += 1
+
         if self.cfg.preplan:
             done = self.env_step.to(self.device) >= self.cfg.total_img - 1
             time_out = time_out*0
-        died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
+        died = done #torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -758,6 +767,8 @@ class QuadcopterEnv(DirectRLEnv):
         if not self.cfg.random_initial:
             target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
             yaw, pitch = compute_orientation(target_position)
+            # TODO empty scene
+            yaw *= -1
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
@@ -810,6 +821,7 @@ class QuadcopterEnv(DirectRLEnv):
 
             for k, env_id in enumerate(env_ids):
                 possible_positions = []
+                complete_count = []
                 """
                 for x in range(-self.cfg.env_size//2, self.cfg.env_size//2):
                     for y in range(-self.cfg.env_size//2, self.cfg.env_size//2):
@@ -824,6 +836,7 @@ class QuadcopterEnv(DirectRLEnv):
                                         break
                                 if flag:
                                     possible_positions.append(pos)
+                """
                 """
                 flag = True
                 while flag:
@@ -848,22 +861,45 @@ class QuadcopterEnv(DirectRLEnv):
                     # Check if the point and its neighbors are all free voxels
                     if vox_pos not in self.occs[env_id]:
                         possible_positions.append(pos)
-                        flag = False
-                        """
-                        for dx, dy, dz in neighbor_offsets:
-                            neighbor_pos = (x + dx, y + dy, z + dz)
-                            if neighbor_pos in self.occs[env_id]:
-                                flag = False
-                                break
-                        if flag:
-                            possible_positions.append(pos)
-                            flag = False
-                        else:
-                            flag = True
-                        """           
-                        
+                        flag = False 
                         #print(random.choice(possible_positions))
                 random_position = random.choice(possible_positions)
+                """
+                for _x in range(-self.cfg.env_size//2+1, self.cfg.env_size//2-1):
+                    for _y in range(-self.cfg.env_size//2+1, self.cfg.env_size//2-1):
+                        for _z in range(1, int(self.cfg.env_size/2*0.6)):
+                            pos = (_x, _y, _z)
+                            x = _x+org_x
+                            y = _y+org_y
+                            z = _z+org_z
+
+                            # to voxel id
+                            x = np.floor(x/cell_size).astype(np.int32)
+                            y = np.floor(y/cell_size).astype(np.int32)
+                            z = np.floor(z/slice_height).astype(np.int32)
+
+                            vox_pos = (x, y, z)
+                            if vox_pos not in self.occs[env_id]:
+                                possible_positions.append(pos)
+                                complete_count.append(self.goal_grid[x, y, z])
+
+                # substraction based
+                #weights = sum(complete_count)-complete_count
+                #weights = weights/sum(weights)
+                # inverse based
+                inverse_count = 1. / np.array(complete_count)
+                weights = inverse_count / np.sum(inverse_count)
+                print(weights)
+                random_position = random.choices(possible_positions, weights=weights, k=1)[0]
+                x = random_position[0]+org_x
+                y = random_position[1]+org_y
+                z = random_position[2]+org_z
+                # to voxel id
+                x = np.floor(x/cell_size).astype(np.int32)
+                y = np.floor(y/cell_size).astype(np.int32)
+                z = np.floor(z/slice_height).astype(np.int32)
+                self.init_vox_pos[env_id] = [x, y, z]
+                
                 #random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
                 random_position_tensor = torch.tensor(random_position).unsqueeze(0)
                 yaw, pitch = compute_orientation(random_position)

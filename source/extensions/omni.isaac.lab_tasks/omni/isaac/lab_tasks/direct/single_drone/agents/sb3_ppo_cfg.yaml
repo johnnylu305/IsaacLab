@@ -8,9 +8,9 @@ batch_size: 128 # make it smaller than n_steps * num_env
 gae_lambda: 0.95
 gamma: 0.99
 n_epochs: 10 #20
-ent_coef: 0. #0.01
+ent_coef: 0 #0.01
 learning_rate: !!float 3e-4
-clip_range: !!float 0.2
+clip_range: !!float 0.2 #0.05 #0.2
 policy_kwargs: "dict(
     features_extractor_class=CustomCombinedExtractor,
     log_std_init=0.0
