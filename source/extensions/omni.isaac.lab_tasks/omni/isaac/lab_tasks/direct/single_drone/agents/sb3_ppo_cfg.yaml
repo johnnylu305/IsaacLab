@@ -6,7 +6,7 @@ policy: 'MultiInputPolicy'
 n_steps: 64 # this is n_step per env, larger num_env with smaller n_steps
 batch_size: 128 # make it smaller than n_steps * num_env
 gae_lambda: 0.95
-gamma: 0.99
+gamma: 0.999 #0.99
 n_epochs: 10 #20
 ent_coef: 0 #0.01
 learning_rate: !!float 3e-4

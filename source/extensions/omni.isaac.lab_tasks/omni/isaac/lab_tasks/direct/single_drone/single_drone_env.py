@@ -78,6 +78,7 @@ class QuadcopterEnv(DirectRLEnv):
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
                 "coverage_ratio",
+                #"penalty",
                 "collision",
                 "more",
                 "goal",
@@ -462,7 +463,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweight_100', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_0.999', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -506,7 +507,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweight_100', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_0.999', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
@@ -579,7 +580,8 @@ class QuadcopterEnv(DirectRLEnv):
             "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
             "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
             "fg": (fg_ratio<0.2).int().reshape(-1, 1) * -0.3 * rew_mask * 0,
-            "sub_goal": sub_goal_reward.int() * 5. * 0
+            "sub_goal": sub_goal_reward.int() * 5. * 0,
+            #"penalty": (self.coverage_ratio_reward == self.last_coverage_ratio).int().reshape(-1, 1) * -0.5 * rew_mask
         }
         #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
         #print(rewards)
@@ -614,7 +616,8 @@ class QuadcopterEnv(DirectRLEnv):
         if self.cfg.preplan:
             done = self.env_step.to(self.device) >= self.cfg.total_img - 1
             time_out = time_out*0
-        died = done #torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
+        died = done
+        #died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -890,6 +893,7 @@ class QuadcopterEnv(DirectRLEnv):
                 inverse_count = 1. / np.array(complete_count)
                 weights = inverse_count / np.sum(inverse_count)
                 print(weights)
+                #random_position = random.choices(possible_positions)[0]
                 random_position = random.choices(possible_positions, weights=weights, k=1)[0]
                 x = random_position[0]+org_x
                 y = random_position[1]+org_y
@@ -903,6 +907,9 @@ class QuadcopterEnv(DirectRLEnv):
                 #random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
                 random_position_tensor = torch.tensor(random_position).unsqueeze(0)
                 yaw, pitch = compute_orientation(random_position)
+                # 50% chance to multiply yaw by -1
+                if random.random() < 0.5:
+                    yaw *= -1
                 #print('pitch', pitch)
                 target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
                 target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
