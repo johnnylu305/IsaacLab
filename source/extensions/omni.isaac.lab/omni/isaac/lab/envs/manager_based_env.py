@@ -5,7 +5,6 @@
 
 import builtins
 import torch
-import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -75,22 +74,31 @@ class ManagerBasedEnv:
         # initialize internal variables
         self._is_closed = False
 
+        # set the seed for the environment
+        if self.cfg.seed is not None:
+            self.seed(self.cfg.seed)
+        else:
+            carb.log_warn("Seed not set for the environment. The environment creation may not be deterministic.")
+
         # create a simulation context to control the simulator
         if SimulationContext.instance() is None:
             # the type-annotation is required to avoid a type-checking error
             # since it gets confused with Isaac Sim's SimulationContext class
             self.sim: SimulationContext = SimulationContext(self.cfg.sim)
         else:
-            raise RuntimeError("Simulation context already exists. Cannot create a new one.")
+            # simulation context should only be created before the environment
+            # when in extension mode
+            if not builtins.ISAAC_LAUNCHED_FROM_TERMINAL:
+                raise RuntimeError("Simulation context already exists. Cannot create a new one.")
+            self.sim: SimulationContext = SimulationContext.instance()
 
         # print useful information
         print("[INFO]: Base environment:")
         print(f"\tEnvironment device    : {self.device}")
+        print(f"\tEnvironment seed      : {self.cfg.seed}")
         print(f"\tPhysics step-size     : {self.physics_dt}")
         print(f"\tRendering step-size   : {self.physics_dt * self.cfg.sim.render_interval}")
         print(f"\tEnvironment step-size : {self.step_dt}")
-        print(f"\tPhysics GPU pipeline  : {self.cfg.sim.use_gpu_pipeline}")
-        print(f"\tPhysics GPU simulation: {self.cfg.sim.physx.use_gpu}")
 
         if self.cfg.sim.render_interval < self.cfg.decimation:
             msg = (
@@ -104,7 +112,7 @@ class ManagerBasedEnv:
         self._sim_step_counter = 0
 
         # generate scene
-        with Timer("[INFO]: Time taken for scene creation"):
+        with Timer("[INFO]: Time taken for scene creation", "scene_creation"):
             self.scene = InteractiveScene(self.cfg.scene)
         print("[INFO]: Scene manager: ", self.scene)
 
@@ -122,7 +130,7 @@ class ManagerBasedEnv:
         # note: when started in extension mode, first call sim.reset_async() and then initialize the managers
         if builtins.ISAAC_LAUNCHED_FROM_TERMINAL is False:
             print("[INFO]: Starting the simulation. This may take a few seconds. Please wait...")
-            with Timer("[INFO]: Time taken for simulation start"):
+            with Timer("[INFO]: Time taken for simulation start", "simulation_start"):
                 self.sim.reset()
             # add timeline event to load managers
             self.load_managers()
@@ -197,17 +205,6 @@ class ManagerBasedEnv:
             :meth:`SimulationContext.reset_async` and it isn't possible to call async functions in the constructor.
 
         """
-        # check the configs
-        if self.cfg.randomization is not None:
-            msg = (
-                "The 'randomization' attribute is deprecated and will be removed in a future release. "
-                "Please use the 'events' attribute to configure the randomization settings."
-            )
-            warnings.warn(msg, category=DeprecationWarning)
-            carb.log_warn(msg)
-            # set the randomization as events (for backward compatibility)
-            self.cfg.events = self.cfg.randomization
-
         # prepare the managers
         # -- action manager
         self.action_manager = ActionManager(self.cfg.actions, self)
@@ -219,12 +216,22 @@ class ManagerBasedEnv:
         self.event_manager = EventManager(self.cfg.events, self)
         print("[INFO] Event Manager: ", self.event_manager)
 
+        # perform events at the start of the simulation
+        # in-case a child implementation creates other managers, the randomization should happen
+        # when all the other managers are created
+        if self.__class__ == ManagerBasedEnv and "startup" in self.event_manager.available_modes:
+            self.event_manager.apply(mode="startup")
+
     """
     Operations - MDP.
     """
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[VecEnvObs, dict]:
         """Resets all the environments and returns observations.
+
+        This function calls the :meth:`_reset_idx` function to reset all the environments.
+        However, certain operations, such as procedural terrain generation, that happened during initialization
+        are not repeated.
 
         Args:
             seed: The seed to use for randomization. Defaults to None, in which case the seed is not set.
@@ -239,9 +246,15 @@ class ManagerBasedEnv:
         # set the seed
         if seed is not None:
             self.seed(seed)
+
         # reset state of scene
         indices = torch.arange(self.num_envs, dtype=torch.int64, device=self.device)
         self._reset_idx(indices)
+
+        # if sensors are added to the scene, make sure we render to reflect changes in reset
+        if self.sim.has_rtx_sensors() and self.cfg.rerender_on_reset:
+            self.sim.render()
+
         # return observations
         return self.observation_manager.compute(), self.extras
 
@@ -261,7 +274,12 @@ class ManagerBasedEnv:
             A tuple containing the observations and extras.
         """
         # process actions
-        self.action_manager.process_action(action)
+        self.action_manager.process_action(action.to(self.device))
+
+        # check if we need to do rendering within the physics loop
+        # note: checked here once to avoid multiple checks within the loop
+        is_rendering = self.sim.has_gui() or self.sim.has_rtx_sensors()
+
         # perform physics stepping
         for _ in range(self.cfg.decimation):
             self._sim_step_counter += 1
@@ -269,11 +287,13 @@ class ManagerBasedEnv:
             self.action_manager.apply_action()
             # set actions into simulator
             self.scene.write_data_to_sim()
-            render = self._sim_step_counter % self.cfg.sim.render_interval == 0 and (
-                self.sim.has_gui() or self.sim.has_rtx_sensors()
-            )
             # simulate
-            self.sim.step(render=render)
+            self.sim.step(render=False)
+            # render between steps only if the GUI or an RTX sensor needs it
+            # note: we assume the render interval to be the shortest accepted rendering interval.
+            #    If a camera needs rendering at a faster frequency, this will lead to unexpected behavior.
+            if self._sim_step_counter % self.cfg.sim.render_interval == 0 and is_rendering:
+                self.sim.render()
             # update buffers at sim dt
             self.scene.update(dt=self.physics_dt)
 
@@ -334,9 +354,11 @@ class ManagerBasedEnv:
         """
         # reset the internal buffers of the scene elements
         self.scene.reset(env_ids)
-        # apply events such as randomizations for environments that need a reset
+
+        # apply events such as randomization for environments that need a reset
         if "reset" in self.event_manager.available_modes:
-            self.event_manager.apply(env_ids=env_ids, mode="reset")
+            env_step_count = self._sim_step_counter // self.cfg.decimation
+            self.event_manager.apply(mode="reset", env_ids=env_ids, global_env_step_count=env_step_count)
 
         # iterate over all managers and reset them
         # this returns a dictionary of information which is stored in the extras

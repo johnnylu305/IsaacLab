@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Wrapper to configure an :class:`ManagerBasedRLEnv` instance to Stable-Baselines3 vectorized environment.
+"""Wrapper to configure a :class:`ManagerBasedRLEnv` or :class:`DirectRLEnv` instance to Stable-Baselines3 vectorized environment.
 
 The following example shows how to wrap an environment for Stable-Baselines3:
 
@@ -88,7 +88,7 @@ class Sb3VecEnvWrapper(VecEnv):
     still considered a single environment instance, Stable Baselines tries to wrap
     around it using the :class:`DummyVecEnv`. This is only done if the environment
     is not inheriting from their :class:`VecEnv`. Thus, this class thinly wraps
-    over the environment from :class:`ManagerBasedRLEnv`.
+    over the environment from :class:`ManagerBasedRLEnv` or :class:`DirectRLEnv`.
 
     Note:
         While Stable-Baselines3 supports Gym 0.26+ API, their vectorized environment
@@ -126,14 +126,14 @@ class Sb3VecEnvWrapper(VecEnv):
 
     """
 
-    def __init__(self, env: ManagerBasedRLEnv):
+    def __init__(self, env: ManagerBasedRLEnv | DirectRLEnv):
         """Initialize the wrapper.
 
         Args:
             env: The environment to wrap around.
 
         Raises:
-            ValueError: When the environment is not an instance of :class:`ManagerBasedRLEnv`.
+            ValueError: When the environment is not an instance of :class:`ManagerBasedRLEnv` or :class:`DirectRLEnv`.
         """
         # check that input is valid
         if not isinstance(env.unwrapped, ManagerBasedRLEnv) and not isinstance(env.unwrapped, DirectRLEnv):
@@ -147,13 +147,16 @@ class Sb3VecEnvWrapper(VecEnv):
         self.num_envs = self.unwrapped.num_envs
         self.sim_device = self.unwrapped.device
         self.render_mode = self.unwrapped.render_mode
+
         # obtain gym spaces
         # note: stable-baselines3 does not like when we have unbounded action space so
         #   we set it to some high value here. Maybe this is not general but something to think about.
         observation_space = self.unwrapped.single_observation_space["policy"]
         action_space = self.unwrapped.single_action_space
-        if isinstance(action_space, gym.spaces.Box) and not action_space.is_bounded(): #!= "both":
+
+        if isinstance(action_space, gym.spaces.Box) and not action_space.is_bounded("both"):
             action_space = gym.spaces.Box(low=-100, high=100, shape=action_space.shape)
+
         # initialize vec-env
         VecEnv.__init__(self, self.num_envs, observation_space, action_space)
         # add buffer for logging episodic information
@@ -178,7 +181,7 @@ class Sb3VecEnvWrapper(VecEnv):
         return cls.__name__
 
     @property
-    def unwrapped(self) -> ManagerBasedRLEnv:
+    def unwrapped(self) -> ManagerBasedRLEnv | DirectRLEnv:
         """Returns the base environment of the wrapper.
 
         This will be the bare :class:`gymnasium.Env` environment, underneath all layers of wrappers.
@@ -206,6 +209,9 @@ class Sb3VecEnvWrapper(VecEnv):
 
     def reset(self) -> VecEnvObs:  # noqa: D102
         obs_dict, _ = self.env.reset()
+        # reset episodic information buffers
+        self._ep_rew_buf.zero_()
+        self._ep_len_buf.zero_()
         # convert data types to numpy depending on backend
         return self._process_obs(obs_dict)
 

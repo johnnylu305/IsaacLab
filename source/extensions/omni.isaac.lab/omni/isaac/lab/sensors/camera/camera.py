@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import math
 import numpy as np
 import re
 import torch
@@ -40,9 +39,11 @@ class Camera(SensorBase):
 
     Summarizing from the `replicator extension`_, the following sensor types are supported:
 
-    - ``"rgb"``: A rendered color image.
+    - ``"rgb"``: A 3-channel rendered color image.
+    - ``"rgba"``: A 4-channel rendered color image with alpha channel.
     - ``"distance_to_camera"``: An image containing the distance to camera optical center.
     - ``"distance_to_image_plane"``: An image containing distances of 3D points from camera plane along camera's z-axis.
+    - ``"depth"``: The same as ``"distance_to_image_plane"``.
     - ``"normals"``: An image containing the local surface normal vectors at each pixel.
     - ``"motion_vectors"``: An image containing the motion vector data at each pixel.
     - ``"semantic_segmentation"``: The semantic segmentation data.
@@ -117,6 +118,9 @@ class Camera(SensorBase):
             rot = torch.tensor(self.cfg.offset.rot, dtype=torch.float32).unsqueeze(0)
             rot_offset = convert_orientation_convention(rot, origin=self.cfg.offset.convention, target="opengl")
             rot_offset = rot_offset.squeeze(0).numpy()
+            # ensure vertical aperture is set, otherwise replace with default for squared pixels
+            if self.cfg.spawn.vertical_aperture is None:
+                self.cfg.spawn.vertical_aperture = self.cfg.spawn.horizontal_aperture * self.cfg.height / self.cfg.width
             # spawn the asset
             self.cfg.spawn.func(
                 self.cfg.prim_path, self.cfg.spawn, translation=self.cfg.offset.pos, orientation=rot_offset
@@ -214,7 +218,7 @@ class Camera(SensorBase):
 
         Args:
             matrices: The intrinsic matrices for the camera. Shape is (N, 3, 3).
-            focal_length: Focal length to use when computing aperture values. Defaults to 1.0.
+            focal_length: Focal length to use when computing aperture values (in cm). Defaults to 1.0.
             env_ids: A sensor ids to manipulate. Defaults to None, which means all sensor indices.
         """
         # resolve env_ids
@@ -243,6 +247,12 @@ class Camera(SensorBase):
                 "horizontal_aperture_offset": (c_x - width / 2) / f_x,
                 "vertical_aperture_offset": (c_y - height / 2) / f_y,
             }
+
+            # TODO: Adjust to handle aperture offsets once supported by omniverse
+            #   Internal ticket from rendering team: OM-42611
+            if params["horizontal_aperture_offset"] > 1e-4 or params["vertical_aperture_offset"] > 1e-4:
+                carb.log_warn("Camera aperture offsets are not supported by Omniverse. These parameters are ignored.")
+
             # change data for corresponding camera index
             sensor_prim = self._sensor_prims[i]
             # set parameters for camera
@@ -368,12 +378,14 @@ class Camera(SensorBase):
             RuntimeError: If the number of camera prims in the view does not match the number of environments.
             RuntimeError: If replicator was not found.
         """
-        try:
-            import omni.replicator.core as rep
-        except ModuleNotFoundError:
+        carb_settings_iface = carb.settings.get_settings()
+        if not carb_settings_iface.get("/isaaclab/cameras_enabled"):
             raise RuntimeError(
-                "Replicator was not found for rendering. Please use --enable_cameras to enable rendering."
+                "A camera was spawned without the --enable_cameras flag. Please use --enable_cameras to enable"
+                " rendering."
             )
+
+        import omni.replicator.core as rep
         from omni.syntheticdata.scripts.SyntheticData import SyntheticData
 
         # Initialize parent class
@@ -387,6 +399,10 @@ class Camera(SensorBase):
                 f"Number of camera prims in the view ({self._view.count}) does not match"
                 f" the number of environments ({self._num_envs})."
             )
+
+        # WAR: use DLAA antialiasing to avoid frame offset issue at small resolutions
+        if self.cfg.width < 265 or self.cfg.height < 265:
+            rep.settings.set_render_rtx_realtime(antialiasing="DLAA")
 
         # Create all env_ids buffer
         self._ALL_INDICES = torch.arange(self._view.count, device=self._device, dtype=torch.long)
@@ -450,8 +466,14 @@ class Camera(SensorBase):
                 else:
                     device_name = "cpu"
 
-                # create annotator node
-                rep_annotator = rep.AnnotatorRegistry.get_annotator(name, init_params, device=device_name)
+                # Map special cases to their corresponding annotator names
+                special_cases = {"rgba": "rgb", "depth": "distance_to_image_plane"}
+                # Get the annotator name, falling back to the original name if not a special case
+                annotator_name = special_cases.get(name, name)
+                # Create the annotator node
+                rep_annotator = rep.AnnotatorRegistry.get_annotator(annotator_name, init_params, device=device_name)
+
+                # attach annotator to render product
                 rep_annotator.attach(render_prod_path)
                 # add to registry
                 self._rep_registry[name].append(rep_annotator)
@@ -541,17 +563,21 @@ class Camera(SensorBase):
             # get camera parameters
             focal_length = sensor_prim.GetFocalLengthAttr().Get()
             horiz_aperture = sensor_prim.GetHorizontalApertureAttr().Get()
+            vert_aperture = sensor_prim.GetVerticalApertureAttr().Get()
+            horiz_aperture_offset = sensor_prim.GetHorizontalApertureOffsetAttr().Get()
+            vert_aperture_offset = sensor_prim.GetVerticalApertureOffsetAttr().Get()
             # get viewport parameters
             height, width = self.image_shape
-            # calculate the field of view
-            fov = 2 * math.atan(horiz_aperture / (2 * focal_length))
-            # calculate the focal length in pixels
-            focal_px = width * 0.5 / math.tan(fov / 2)
+            # extract intrinsic parameters
+            f_x = (width * focal_length) / horiz_aperture
+            f_y = (height * focal_length) / vert_aperture
+            c_x = width * 0.5 + horiz_aperture_offset * f_x
+            c_y = height * 0.5 + vert_aperture_offset * f_y
             # create intrinsic matrix for depth linear
-            self._data.intrinsic_matrices[i, 0, 0] = focal_px
-            self._data.intrinsic_matrices[i, 0, 2] = width * 0.5
-            self._data.intrinsic_matrices[i, 1, 1] = focal_px
-            self._data.intrinsic_matrices[i, 1, 2] = height * 0.5
+            self._data.intrinsic_matrices[i, 0, 0] = f_x
+            self._data.intrinsic_matrices[i, 0, 2] = c_x
+            self._data.intrinsic_matrices[i, 1, 1] = f_y
+            self._data.intrinsic_matrices[i, 1, 2] = c_y
             self._data.intrinsic_matrices[i, 2, 2] = 1
 
     def _update_poses(self, env_ids: Sequence[int]):
@@ -620,17 +646,27 @@ class Camera(SensorBase):
             if self.cfg.colorize_semantic_segmentation:
                 data = data.view(torch.uint8).reshape(height, width, -1)
             else:
-                data = data.view(height, width)
+                data = data.view(height, width, 1)
         elif name == "instance_segmentation_fast":
             if self.cfg.colorize_instance_segmentation:
                 data = data.view(torch.uint8).reshape(height, width, -1)
             else:
-                data = data.view(height, width)
+                data = data.view(height, width, 1)
         elif name == "instance_id_segmentation_fast":
             if self.cfg.colorize_instance_id_segmentation:
                 data = data.view(torch.uint8).reshape(height, width, -1)
             else:
-                data = data.view(height, width)
+                data = data.view(height, width, 1)
+        # make sure buffer dimensions are consistent as (H, W, C)
+        elif name == "distance_to_camera" or name == "distance_to_image_plane" or name == "depth":
+            data = data.view(height, width, 1)
+        # we only return the RGB channels from the RGBA output if rgb is required
+        # normals return (x, y, z) in first 3 channels, 4th channel is unused
+        elif name == "rgb" or name == "normals":
+            data = data[..., :3]
+        # motion vectors return (x, y) in first 2 channels, 3rd and 4th channels are unused
+        elif name == "motion_vectors":
+            data = data[..., :2]
 
         # return the data and info
         return data, info

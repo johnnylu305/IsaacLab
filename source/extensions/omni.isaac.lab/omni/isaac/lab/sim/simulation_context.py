@@ -7,6 +7,7 @@ import builtins
 import enum
 import numpy as np
 import sys
+import torch
 import traceback
 import weakref
 from collections.abc import Iterator
@@ -132,7 +133,7 @@ class SimulationContext(_SimulationContext):
             carb_settings_iface.set_bool("/physics/disableContactProcessing", True)
         # enable custom geometry for cylinder and cone collision shapes to allow contact reporting for them
         # reason: cylinders and cones aren't natively supported by PhysX so we need to use custom geometry flags
-        # reference: https://nvidia-omniverse.github.io/PhysX/physx/5.2.1/docs/Geometry.html?highlight=capsule#geometry
+        # reference: https://nvidia-omniverse.github.io/PhysX/physx/5.4.1/docs/Geometry.html?highlight=capsule#geometry
         carb_settings_iface.set_bool("/physics/collisionConeCustomGeometry", False)
         carb_settings_iface.set_bool("/physics/collisionCylinderCustomGeometry", False)
         # note: we read this once since it is not expected to change during runtime
@@ -145,6 +146,8 @@ class SimulationContext(_SimulationContext):
         # casting None to False if the flag doesn't exist
         # this flag is set from the AppLauncher class
         self._offscreen_render = bool(carb_settings_iface.get("/isaaclab/render/offscreen"))
+        # read flag for whether the default viewport should be enabled
+        self._render_viewport = bool(carb_settings_iface.get("/isaaclab/render/active_viewport"))
         # flag for whether any GUI will be rendered (local, livestreamed or viewport)
         self._has_gui = self._local_gui or self._livestream_gui
 
@@ -182,6 +185,14 @@ class SimulationContext(_SimulationContext):
             # rendering frequency in terms of number of render calls
             self._render_throttle_period = 5
 
+        # check the case where we don't need to render the viewport
+        # since render_viewport can only be False in headless mode, we only need to check for offscreen_render
+        if not self._render_viewport and self._offscreen_render:
+            # disable the viewport if offscreen_render is enabled
+            from omni.kit.viewport.utility import get_active_viewport
+
+            get_active_viewport().updates_enabled = False
+
         # override enable scene querying if rendering is enabled
         # this is needed for some GUI features
         if self._has_gui:
@@ -194,6 +205,12 @@ class SimulationContext(_SimulationContext):
         # read isaac sim version (this includes build tag, release tag etc.)
         # note: we do it once here because it reads the VERSION file from disk and is not expected to change.
         self._isaacsim_version = get_version()
+
+        # create a tensor for gravity
+        # note: this line is needed to create a "tensor" in the device to avoid issues with torch 2.1 onwards.
+        #   the issue is with some heap memory corruption when torch tensor is created inside the asset class.
+        #   you can reproduce the issue by commenting out this line and running the test `test_articulation.py`.
+        self._gravity_tensor = torch.tensor(self.cfg.gravity, dtype=torch.float32, device=self.cfg.device)
 
         # add callback to deal the simulation app when simulation is stopped.
         # this is needed because physics views go invalid once we stop the simulation
@@ -445,7 +462,10 @@ class SimulationContext(_SimulationContext):
         else:
             # manually flush the fabric data to update Hydra textures
             if self._fabric_iface is not None:
-                self._fabric_iface.update(0.0, 0.0)
+                if self.physics_sim_view is not None and self.is_playing():
+                    # Update the articulations' link's poses before rendering
+                    self.physics_sim_view.update_articulations_kinematic()
+                self._update_fabric(0.0, 0.0)
             # render the simulation
             # note: we don't call super().render() anymore because they do above operation inside
             #  and we don't want to do it twice. We may remove it once we drop support for Isaac Sim 2022.2.
@@ -515,7 +535,7 @@ class SimulationContext(_SimulationContext):
             raise RuntimeError("Physics scene API is None! Please create the scene first.")
         # set parameters not directly supported by the constructor
         # -- Continuous Collision Detection (CCD)
-        # ref: https://nvidia-omniverse.github.io/PhysX/physx/5.2.1/docs/AdvancedCollisionDetection.html?highlight=ccd#continuous-collision-detection
+        # ref: https://nvidia-omniverse.github.io/PhysX/physx/5.4.1/docs/AdvancedCollisionDetection.html?highlight=ccd#continuous-collision-detection
         self._physics_context.enable_ccd(self.cfg.physx.enable_ccd)
         # -- GPU collision stack size
         physx_scene_api.CreateGpuCollisionStackSizeAttr(self.cfg.physx.gpu_collision_stack_size)
@@ -559,6 +579,15 @@ class SimulationContext(_SimulationContext):
 
             # acquire fabric interface
             self._fabric_iface = get_physx_fabric_interface()
+            if hasattr(self._fabric_iface, "force_update"):
+                # The update method in the fabric interface only performs an update if a physics step has occurred.
+                # However, for rendering, we need to force an update since any element of the scene might have been
+                # modified in a reset (which occurs after the physics step) and we want the renderer to be aware of
+                # these changes.
+                self._update_fabric = self._fabric_iface.force_update
+            else:
+                # Needed for backward compatibility with older Isaac Sim versions
+                self._update_fabric = self._fabric_iface.update
 
     """
     Callbacks.

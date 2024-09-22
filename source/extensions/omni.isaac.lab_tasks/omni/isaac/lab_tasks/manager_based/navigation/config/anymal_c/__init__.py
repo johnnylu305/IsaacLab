@@ -17,7 +17,8 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": navigation_env_cfg.NavigationEnvCfg,
-        "rsl_rl_cfg_entry_point": agents.rsl_rl_cfg.NavigationEnvPPORunnerCfg,
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NavigationEnvPPORunnerCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_flat_ppo_cfg.yaml",
     },
 )
 
@@ -27,6 +28,7 @@ gym.register(
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": navigation_env_cfg.NavigationEnvCfg_PLAY,
-        "rsl_rl_cfg_entry_point": agents.rsl_rl_cfg.NavigationEnvPPORunnerCfg,
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:NavigationEnvPPORunnerCfg",
+        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_flat_ppo_cfg.yaml",
     },
 )

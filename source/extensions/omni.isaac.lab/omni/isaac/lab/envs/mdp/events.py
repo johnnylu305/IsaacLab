@@ -14,8 +14,8 @@ the event introduced by the function.
 
 from __future__ import annotations
 
+import numpy as np
 import torch
-import warnings
 from typing import TYPE_CHECKING, Literal
 
 import carb
@@ -81,20 +81,20 @@ def randomize_rigid_body_material(
     materials = asset.root_physx_view.get_material_properties()
 
     # sample material properties from the given ranges
-    material_samples = torch.zeros(materials[env_ids].shape)
-    material_samples[..., 0].uniform_(*static_friction_range)
-    material_samples[..., 1].uniform_(*dynamic_friction_range)
-    material_samples[..., 2].uniform_(*restitution_range)
+    material_samples = np.zeros(materials[env_ids].shape)
+    material_samples[..., 0] = np.random.uniform(*static_friction_range)
+    material_samples[..., 1] = np.random.uniform(*dynamic_friction_range)
+    material_samples[..., 2] = np.random.uniform(*restitution_range)
 
     # create uniform range tensor for bucketing
-    lo = torch.tensor([static_friction_range[0], dynamic_friction_range[0], restitution_range[0]], device="cpu")
-    hi = torch.tensor([static_friction_range[1], dynamic_friction_range[1], restitution_range[1]], device="cpu")
+    lo = np.array([static_friction_range[0], dynamic_friction_range[0], restitution_range[0]])
+    hi = np.array([static_friction_range[1], dynamic_friction_range[1], restitution_range[1]])
 
     # to avoid 64k material limit in physx, we bucket materials by binning randomized material properties
     # into buckets based on the number of buckets specified
     for d in range(3):
-        buckets = torch.tensor([(hi[d] - lo[d]) * i / num_buckets + lo[d] for i in range(num_buckets)], device="cpu")
-        material_samples[..., d] = buckets[torch.searchsorted(buckets, material_samples[..., d].contiguous()) - 1]
+        buckets = np.array([(hi[d] - lo[d]) * i / num_buckets + lo[d] for i in range(num_buckets)])
+        material_samples[..., d] = buckets[np.searchsorted(buckets, material_samples[..., d]) - 1]
 
     # update material buffer with new samples
     if isinstance(asset, Articulation) and asset_cfg.body_ids != slice(None):
@@ -115,38 +115,14 @@ def randomize_rigid_body_material(
             # assign the new materials
             # material ids are of shape: num_env_ids x num_shapes
             # material_buckets are of shape: num_buckets x 3
-            materials[env_ids, start_idx:end_idx] = material_samples[:, start_idx:end_idx]
+            materials[env_ids, start_idx:end_idx] = torch.from_numpy(material_samples[:, start_idx:end_idx]).to(
+                dtype=torch.float
+            )
     else:
-        materials[env_ids] = material_samples
+        materials[env_ids] = torch.from_numpy(material_samples).to(dtype=torch.float)
 
     # apply to simulation
     asset.root_physx_view.set_material_properties(materials, env_ids)
-
-
-def add_body_mass(
-    env: ManagerBasedEnv,
-    env_ids: torch.Tensor | None,
-    mass_distribution_params: tuple[float, float],
-    asset_cfg: SceneEntityCfg,
-):
-    """Randomize the mass of the bodies by adding a random value sampled from the given range.
-
-    .. tip::
-        This function uses CPU tensors to assign the body masses. It is recommended to use this function
-        only during the initialization of the environment.
-
-    .. deprecated:: v0.4
-        This function is deprecated. Please use :func:`randomize_rigid_body_mass` with ``operation="add"`` instead.
-
-    """
-    msg = "Event term 'add_body_mass' is deprecated. Please use 'randomize_rigid_body_mass' with operation='add'."
-    warnings.warn(msg, DeprecationWarning)
-    carb.log_warn(msg)
-
-    # call the new function
-    randomize_rigid_body_mass(
-        env, env_ids, asset_cfg, mass_distribution_params, operation="add", distribution="uniform"
-    )
 
 
 def randomize_rigid_body_mass(
@@ -156,11 +132,17 @@ def randomize_rigid_body_mass(
     mass_distribution_params: tuple[float, float],
     operation: Literal["add", "scale", "abs"],
     distribution: Literal["uniform", "log_uniform", "gaussian"] = "uniform",
+    recompute_inertia: bool = True,
 ):
     """Randomize the mass of the bodies by adding, scaling, or setting random values.
 
     This function allows randomizing the mass of the bodies of the asset. The function samples random values from the
     given distribution parameters and adds, scales, or sets the values into the physics simulation based on the operation.
+
+    If the ``recompute_inertia`` flag is set to ``True``, the function recomputes the inertia tensor of the bodies
+    after setting the mass. This is useful when the mass is changed significantly, as the inertia tensor depends
+    on the mass. It assumes the body is a uniform density object. If the body is not a uniform density object,
+    the inertia tensor may not be accurate.
 
     .. tip::
         This function uses CPU tensors to assign the body masses. It is recommended to use this function
@@ -183,7 +165,10 @@ def randomize_rigid_body_mass(
 
     # get the current masses of the bodies (num_assets, num_bodies)
     masses = asset.root_physx_view.get_masses()
+
     # apply randomization on default values
+    # this is to make sure when calling the function multiple times, the randomization is applied on the
+    # default values and not the previously randomized values
     masses[env_ids[:, None], body_ids] = asset.data.default_mass[env_ids[:, None], body_ids].clone()
 
     # sample from the given range
@@ -195,6 +180,24 @@ def randomize_rigid_body_mass(
 
     # set the mass into the physics simulation
     asset.root_physx_view.set_masses(masses, env_ids)
+
+    # recompute inertia tensors if needed
+    if recompute_inertia:
+        # compute the ratios of the new masses to the initial masses
+        ratios = masses[env_ids[:, None], body_ids] / asset.data.default_mass[env_ids[:, None], body_ids]
+        # scale the inertia tensors by the the ratios
+        # since mass randomization is done on default values, we can use the default inertia tensors
+        inertias = asset.root_physx_view.get_inertias()
+        if isinstance(asset, Articulation):
+            # inertia has shape: (num_envs, num_bodies, 9) for articulation
+            inertias[env_ids[:, None], body_ids] = (
+                asset.data.default_inertia[env_ids[:, None], body_ids] * ratios[..., None]
+            )
+        else:
+            # inertia has shape: (num_envs, 9) for rigid object
+            inertias[env_ids] = asset.data.default_inertia[env_ids] * ratios
+        # set the inertia tensors into the physics simulation
+        asset.root_physx_view.set_inertias(inertias, env_ids)
 
 
 def randomize_physics_scene_gravity(
