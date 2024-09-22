@@ -154,7 +154,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     reward_logging_callback = RewardLoggingCallback(log_dir, verbose=2)
 
     # Train the agent with both the checkpoint and reward logging callbacks
-    agent.learn(total_timesteps=n_timesteps, callback=[checkpoint_callback, reward_logging_callback])
+    agent.learn(total_timesteps=n_timesteps)
 
     agent.save(os.path.join(log_dir, "model"))
     env.close()
