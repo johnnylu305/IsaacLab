@@ -104,7 +104,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     sim: SimulationCfg = SimulationCfg(
         dt=1/50, # physical simulation step
         disable_contact_processing=True,
-        physx=sim_utils.PhysxCfg(use_gpu=True), # with use_gpu, the buffer cannot grow dynamically
+        physx=sim_utils.PhysxCfg(), # with use_gpu, the buffer cannot grow dynamically
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
             restitution_combine_mode="multiply",

@@ -367,7 +367,7 @@ class QuadcopterEnv(DirectRLEnv):
         env_ids = [i for i in range(self.cfg.num_envs)] if env_ids is None else env_ids
 
         # get images
-        depth_image = self._camera.data.output["distance_to_image_plane"].clone()
+        depth_image = self._camera.data.output["distance_to_image_plane"].clone()[:, :, :, 0]
         #depth_image = self._camera.data.output["depth"][:,:,:,0].clone()
         rgb_image = self._camera.data.output["rgb"].clone()
        
@@ -463,7 +463,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_0.999', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_final_1.2.0', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -507,7 +507,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_0.999', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_final_1.2.0', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
