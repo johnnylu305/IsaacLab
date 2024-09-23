@@ -46,7 +46,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                                                     nn.Conv2d(in_channels=12, out_channels=12, kernel_size=5, stride=2, padding=1), 
                                                     nn.LeakyReLU(),   # Second ReLU activation
                                                     nn.Flatten(),  # Flatten the output to feed into linear layer
-                                                    nn.Linear(in_features=15552, out_features=256),  # Linear layer to 256 units
+                                                    nn.Linear(in_features=15552, out_features=256),  # 15552 # Linear layer to 256 units
                                                     nn.LeakyReLU(),   # Second ReLU activation
                                                 )
                     total_concat_size += 256

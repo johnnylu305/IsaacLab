@@ -162,21 +162,21 @@ class QuadcopterEnv(DirectRLEnv):
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
-        rescale_scene(scene_prim_root="/World/ground/Environment", max_len=8e4)
+        rescale_scene(scene_prim_root="/World/ground/Environment", max_len=13e4)
  
 
         # prevent mirror
-        self.scene.clone_environments(copy_from_source=True)
+        self.scene.clone_environments(copy_from_source=False)#True)
 
         # robot
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
         # sensor
-        self._camera = Camera(self.cfg.camera)
-        #self._camera = TiledCamera(self.cfg.camera)
+        #self._camera = Camera(self.cfg.camera)
+        self._camera = TiledCamera(self.cfg.camera)
         self.scene.sensors["camera"] = self._camera
         
-        self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
+        #self.scene.filter_collisions(global_prim_paths=[self.cfg.terrain.prim_path])
 
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=4000.0, color=(0.75, 0.75, 0.75))
@@ -188,9 +188,9 @@ class QuadcopterEnv(DirectRLEnv):
                                   self.cfg.max_log_odds, self.cfg.min_log_odds, self.device)
         
         # rescale robot
-        robot_scale = get_robot_scale("/World/envs/env_0/Robot", 1)
-        for i in range(self.num_envs):
-            rescale_robot(f"/World/envs/env_{i}/Robot", robot_scale)
+        #robot_scale = get_robot_scale("/World/envs/env_0/Robot", 1)
+        #for i in range(self.num_envs):
+        #    rescale_robot(f"/World/envs/env_{i}/Robot", robot_scale)
 
         # grid for random initialization
         self.goal_grid = np.ones((self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size))
@@ -217,6 +217,22 @@ class QuadcopterEnv(DirectRLEnv):
 
             env_ids = torch.arange(self.cfg.num_envs)
             for i, scene in enumerate(scene_lists):
+                #TODO: chnage Occ to Occ_new_2000
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+                occ_path = os.path.join(path, "fill_occ_set.pkl")
+                # To load the occupied voxels from the file
+                # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
+                with open(occ_path, 'rb') as file:
+                    self.occs[env_ids[i]] = pickle.load(file)    
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
+                #print(path)
+                occ_path = os.path.join(path, "occ.npy")
+                self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
+                #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
+                occ_path = os.path.join(path, "faces.npy")
+                self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
+            """
+            for i, scene in enumerate(scene_lists):
                 #TODO: change Occ to Occ_new_2000
                 path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
                 occ_path = os.path.join(path, "fill_occ_set.pkl")
@@ -228,7 +244,7 @@ class QuadcopterEnv(DirectRLEnv):
                 path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
                 occ_path = os.path.join(path, "occ.npy")
                 self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
-
+            """
         self.fg_masks = torch.zeros((self.cfg.num_envs, self.cfg.camera_h, self.cfg.camera_w)).to(self.device)
         self.point_cloud = o3d.geometry.PointCloud()
         self.scene_id=0
@@ -368,6 +384,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         # get images
         depth_image = self._camera.data.output["distance_to_image_plane"].clone()[:, :, :, 0]
+        #print(depth_image)
         #depth_image = self._camera.data.output["depth"][:,:,:,0].clone()
         rgb_image = self._camera.data.output["rgb"].clone()
        
@@ -514,7 +531,9 @@ class QuadcopterEnv(DirectRLEnv):
                 rew = self.coverage_ratio_reward[i, 0] 
                 plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
                            np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
-                           cmap='gray')
+                           cmap='gray',
+                           vmin=0,
+                           vmax=20)
                 plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
                            rgb_image[i].detach().cpu().numpy().astype(np.uint8))
  
@@ -704,8 +723,9 @@ class QuadcopterEnv(DirectRLEnv):
         #self._robot.write_joint_state_to_sim(joint_pos, joint_vel, None, env_ids)
         
         # clear building
-        for env_id in env_ids:
-            delete_prim(f'/World/envs/env_{env_id}/Scene')
+        # TODO NOT USE 256 building
+        #for env_id in env_ids:
+        #    delete_prim(f'/World/envs/env_{env_id}/Scene')
 
         # reset occupancy grid
         grid_size = (self.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size)
@@ -747,10 +767,14 @@ class QuadcopterEnv(DirectRLEnv):
             #print(scene_lists)
         else:
             # add scene
-            _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
-                                                         env_ids=env_ids, my_asset_list=self.cfg_list)
+            # TODO NOT DELETE SCENE
+            #_, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+            #                                             env_ids=env_ids, my_asset_list=self.cfg_list)
+            pass
         
         # load occ set and gt
+        # TODO DONT NEED THIS IF WE DO NOT CHANGE BUILDING
+        """
         for i, scene in enumerate(scene_lists):
             #TODO: chnage Occ to Occ_new_2000
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
@@ -766,7 +790,7 @@ class QuadcopterEnv(DirectRLEnv):
             #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
             occ_path = os.path.join(path, "faces.npy")
             self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
-           
+        """
         if not self.cfg.random_initial:
             target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
             yaw, pitch = compute_orientation(target_position)
@@ -892,7 +916,7 @@ class QuadcopterEnv(DirectRLEnv):
                 # inverse based
                 inverse_count = 1. / np.array(complete_count)
                 weights = inverse_count / np.sum(inverse_count)
-                print(weights)
+                #print(weights)
                 #random_position = random.choices(possible_positions)[0]
                 random_position = random.choices(possible_positions, weights=weights, k=1)[0]
                 x = random_position[0]+org_x
@@ -955,9 +979,9 @@ class QuadcopterEnv(DirectRLEnv):
         self._index = -1
 
         self.env_episode[env_ids.cpu().numpy()] += 1
-        for i in range(5):
-            self.sim.step()
-            self.scene.update(dt=0)
+        #for i in range(5):
+        #    self.sim.step()
+        #    self.scene.update(dt=0)
 
         self.update_observations(env_ids)
 
