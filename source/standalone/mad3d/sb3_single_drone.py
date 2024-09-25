@@ -72,15 +72,56 @@ class RewardLoggingCallback(BaseCallback):
     def _on_step(self) -> bool:
         infos = self.locals.get("infos")
         current_step = self.num_timesteps
-        for i, info in enumerate(infos):
-            episode_info = info['episode']
+        # for i, info in enumerate(infos):
+        #     episode_info = info['episode']
+        #     if episode_info:
+        #         for key, value in episode_info.items():
+        #             if "Episode Reward" in key:
+        #                 self.writer.add_scalar(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item(), current_step)
+        #             elif "train_cus" in key:
+        #                 for j, v in enumerate(value):
+        #                     self.writer.add_scalar(f"Episode Reward Env {i}/{key.split('/')[1]}", v, current_step-(len(value)-j-1)*len(infos))    
+
+        aggregated_rewards = {}
+        aggregated_train_cus = {}
+
+        # Loop through each environment's info and aggregate data
+        for info in infos:
+            episode_info = info.get('episode', None)
             if episode_info:
                 for key, value in episode_info.items():
+                    # Aggregate "Episode Reward" values
                     if "Episode Reward" in key:
-                        self.writer.add_scalar(f"Episode Reward Env {i}/{key.split('/')[1]}", value.detach().cpu().item(), current_step)
+                        # Extract the specific reward type, e.g., "Reward"
+                        reward_type = key.split('/')[1]
+                        if reward_type not in aggregated_rewards:
+                            aggregated_rewards[reward_type] = []
+                        # Append the value to the list of the reward type
+                        aggregated_rewards[reward_type].append(value.detach().cpu().item())
+                    
+                    # Aggregate "train_cus" values
                     elif "train_cus" in key:
+                        # Extract the specific train_cus type, e.g., "train_cus_metric"
+                        train_cus_type = key.split('/')[1]
+                        if train_cus_type not in aggregated_train_cus:
+                            aggregated_train_cus[train_cus_type] = []
+                        # Append each value with its corresponding adjusted step
                         for j, v in enumerate(value):
-                            self.writer.add_scalar(f"Episode Reward Env {i}/{key.split('/')[1]}", v, current_step-(len(value)-j-1)*len(infos))                        
+                            aggregated_train_cus[train_cus_type].append(
+                                (v, current_step - (len(value) - j - 1) * len(infos))
+                            )
+
+        # Log the aggregated "Episode Reward" information
+        for reward_type, values in aggregated_rewards.items():
+            mean_reward = sum(values) / len(values)
+            self.writer.add_scalar(f"Aggregated Episode Reward/{reward_type}", mean_reward, current_step)
+
+        # Log the aggregated "train_cus" information
+        for train_cus_type, values in aggregated_train_cus.items():
+            # Log each value with its adjusted step
+            for v, step in values:
+                self.writer.add_scalar(f"Aggregated train_cus/{train_cus_type}", v, step)
+
         if self.num_timesteps % self.freq == 0:
             x_s, y_s, z_s, pitch_s, yaw_s = torch.exp(self.model.policy.log_std).detach().cpu().numpy()
             self.writer.add_scalar("train_cus/x_std", x_s, current_step)

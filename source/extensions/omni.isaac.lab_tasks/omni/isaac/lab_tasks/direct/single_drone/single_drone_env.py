@@ -84,7 +84,8 @@ class QuadcopterEnv(DirectRLEnv):
                 "goal",
                 "fg",
                 "status coverage_ratio",
-                "sub_goal"
+                "sub_goal",
+                "status_obv_face"
             ]
         }
 
@@ -166,7 +167,7 @@ class QuadcopterEnv(DirectRLEnv):
  
 
         # prevent mirror
-        self.scene.clone_environments(copy_from_source=False)#True)
+        self.scene.clone_environments(copy_from_source=True)#True)
 
         # robot
         self._robot = Articulation(self.cfg.robot)
@@ -206,8 +207,8 @@ class QuadcopterEnv(DirectRLEnv):
                 # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
                 scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
             # only use one building
-            #scenes_path = scenes_path[1:2]
-            scenes_path = scenes_path[0:1]
+            #scenes_path = scenes_path[0:256]
+            #scenes_path = scenes_path[0:1]
             self.cfg_list = []
             for scene_path in scenes_path:
                 self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
@@ -427,7 +428,9 @@ class QuadcopterEnv(DirectRLEnv):
         
          
         if self.cfg.vis_pointcloud:
-            colors = rgb_image[0,:,:,:-1].transpose(0,1).detach().cpu().numpy().reshape(-1, 3) / 255.0  # Normalize color values
+            #import pdb; pdb.set_trace()
+            #colors = rgb_image[0,:,:,:-1].transpose(0,1).detach().cpu().numpy().reshape(-1, 3) / 255.0  # Normalize color values
+            colors = rgb_image[0,:,:,:].transpose(0,1).detach().cpu().numpy().reshape(-1, 3) / 255.0  # Normalize color values
                             
             # Create a point cloud object from the points
             point_cloud = o3d.geometry.PointCloud()
@@ -480,7 +483,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_final_1.2.0', f'{self.env_episode[i]}')
+                root_path = os.path.join('gennbv_1.2.0', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -524,7 +527,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_final_1.2.0', f'{self.env_episode[i]}')
+                root_path = os.path.join('gennbv_final_1.2.0', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
@@ -610,6 +613,9 @@ class QuadcopterEnv(DirectRLEnv):
         for key, value in rewards.items():
             self._episode_sums[key] += value.squeeze(1)
         self._episode_sums["status coverage_ratio"] = self.coverage_ratio_reward.squeeze() #num_match_occ/total_occ
+        self._episode_sums["status_obv_face"] = torch.sum(torch.logical_and(self.obv_face, self.gt_faces),(1,2,3,4))/torch.sum(self.gt_faces, (1,2,3,4))
+        #print(self._episode_sums["obv_face"])
+        #import pdb; pdb.set_trace()
         for i in range(self.cfg.num_envs):
             self.episode_rec["x"][i].append(self.robot_pos[i, 0].clone()-self._terrain.env_origins[i][0])
             self.episode_rec["y"][i].append(self.robot_pos[i, 1].clone()-self._terrain.env_origins[i][1])
@@ -627,16 +633,18 @@ class QuadcopterEnv(DirectRLEnv):
         done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
         #done = self.env_step.to(self.device) >= self.cfg.total_img - 1
 
-        for i in range(self.num_envs):
-            if self.coverage_ratio_reward.squeeze()[i] >= self.cfg.goal:
-                x, y, z = self.init_vox_pos[i]
-                self.goal_grid[x, y, z] += 1
+        
 
         if self.cfg.preplan:
             done = self.env_step.to(self.device) >= self.cfg.total_img - 1
             time_out = time_out*0
-        died = done
-        #died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
+        else:
+            for i in range(self.num_envs):
+                if self.coverage_ratio_reward.squeeze()[i] >= self.cfg.goal:
+                    x, y, z = self.init_vox_pos[i]
+                    self.goal_grid[x, y, z] += 1
+        #died = done
+        died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -651,47 +659,51 @@ class QuadcopterEnv(DirectRLEnv):
             # Spread out the resets to avoid spikes in training when many environments reset at a similar time
             #self.episode_length_buf = torch.randint_like(self.episode_length_buf, high=int(self.max_episode_length))
 
-        if self.cfg.preplan and self.scene_id>0:
-            print(self._episode_sums["status coverage_ratio"])
-            file_path = 'test.npy'
-            if os.path.exists(file_path):
-                # Load the existing data
-                existing_data = np.load(file_path)
-                # Append the new data
-                updated_data = np.concatenate((existing_data, self._episode_sums["status coverage_ratio"].cpu().numpy()))
-            else:
-                # If the file doesn't exist, the new data becomes the updated data
-                updated_data = self._episode_sums["status coverage_ratio"].cpu().numpy()
+        # if self.cfg.preplan and self.scene_id>0:
+        #     print(self._episode_sums["status coverage_ratio"])
+        #     file_path = 'test.npy'
+        #     if os.path.exists(file_path):
+        #         # Load the existing data
+        #         existing_data = np.load(file_path)
+        #         # Append the new data
+        #         updated_data = np.concatenate((existing_data, self._episode_sums["status coverage_ratio"].cpu().numpy()))
+        #     else:
+        #         # If the file doesn't exist, the new data becomes the updated data
+        #         updated_data = self._episode_sums["status coverage_ratio"].cpu().numpy()
             
-            np.save('test.npy', updated_data)
+        #     np.save('test.npy', updated_data)
 
         # Logging
-        extras = dict()
-        for key in self._episode_sums.keys():
-            #print(self._episode_sums[key])
-            #print(self.env_step.to(self.device))
-            #print("ccccccccccccccccccccc")
-            if "status" not in key:
-                extras["Episode Reward/" + key] = self._episode_sums[key] / self.env_step.to(self.device)
-                self._episode_sums[key][env_ids] = 0.0
-        extras["Episode Reward/status coverage_ratio"] = self._episode_sums["status coverage_ratio"].clone()
-        
-        self._episode_sums["status coverage_ratio"][env_ids] = 0.0
 
-        extras["train_cus/x"] = self.episode_rec["x"].copy()
-        extras["train_cus/y"] = self.episode_rec["y"].copy()
-        extras["train_cus/z"] = self.episode_rec["z"].copy()
-        extras["train_cus/pitch"] = self.episode_rec["pitch"].copy()
-        extras["train_cus/yaw"] = self.episode_rec["yaw"].copy()
-        for i in env_ids:
-            self.episode_rec["x"][i] = []
-            self.episode_rec["y"][i] = []
-            self.episode_rec["z"][i] = []
-            self.episode_rec["pitch"][i] = []
-            self.episode_rec["yaw"][i] = []
+        if not self.cfg.preplan:
+            extras = dict()
+            for key in self._episode_sums.keys():
+                #print(self._episode_sums[key])
+                #print(self.env_step.to(self.device))
+                #print("ccccccccccccccccccccc")
+                if "status" not in key:
+                    extras["Episode Reward/" + key] = self._episode_sums[key] / self.env_step.to(self.device)
+                    self._episode_sums[key][env_ids] = 0.0
+            extras["Episode Reward/status coverage_ratio"] = self._episode_sums["status coverage_ratio"].clone()
+            self._episode_sums["status coverage_ratio"][env_ids] = 0.0
 
-        self.extras["log"] = dict()
-        self.extras["log"].update(extras)
+            extras["Episode Reward/status obv face"] = self._episode_sums["status_obv_face"].clone()
+            self._episode_sums["status_obv_face"][env_ids] = 0.0
+
+            extras["train_cus/x"] = self.episode_rec["x"].copy()
+            extras["train_cus/y"] = self.episode_rec["y"].copy()
+            extras["train_cus/z"] = self.episode_rec["z"].copy()
+            extras["train_cus/pitch"] = self.episode_rec["pitch"].copy()
+            extras["train_cus/yaw"] = self.episode_rec["yaw"].copy()
+            for i in env_ids:
+                self.episode_rec["x"][i] = []
+                self.episode_rec["y"][i] = []
+                self.episode_rec["z"][i] = []
+                self.episode_rec["pitch"][i] = []
+                self.episode_rec["yaw"][i] = []
+
+            self.extras["log"] = dict()
+            self.extras["log"].update(extras)
 
         # reset step
         self.env_step[env_ids] = 0
@@ -795,7 +807,7 @@ class QuadcopterEnv(DirectRLEnv):
             target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
             yaw, pitch = compute_orientation(target_position)
             # TODO empty scene
-            yaw *= -1
+            #yaw *= -1
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
@@ -979,9 +991,9 @@ class QuadcopterEnv(DirectRLEnv):
         self._index = -1
 
         self.env_episode[env_ids.cpu().numpy()] += 1
-        #for i in range(5):
-        #    self.sim.step()
-        #    self.scene.update(dt=0)
+        for i in range(1):
+            self.sim.step()
+            self.scene.update(dt=0)
 
         self.update_observations(env_ids)
 
