@@ -52,6 +52,7 @@ def spawn_from_multiple_usd_env_id(
         full_prim_path = f"{source_prim_path}/{asset_path}"
         cfg = random.choice(my_asset_list)
         asset_list.append(cfg.usd_path)
+        print(full_prim_path)
         prim = _spawn_from_usd_file(full_prim_path, cfg.usd_path, cfg, translation, orientation)
         
 

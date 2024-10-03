@@ -55,7 +55,7 @@ from omni.physx import get_physx_scene_query_interface
 from omni.isaac.core.articulations import ArticulationView
 import omni.isaac.core.utils.prims as prim_utils
 
-from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground, get_seen_face
+from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground, get_seen_face, compute_distance_to_center_distance
 import time
 from omni.isaac.lab.markers import VisualizationMarkers
 import open3d as o3d 
@@ -480,7 +480,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_fg', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_fgc_linear02', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -524,7 +524,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_fg', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_fgc_linear02', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
@@ -577,6 +577,9 @@ class QuadcopterEnv(DirectRLEnv):
         #self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
         
         fg_ratio = torch.sum(self.fg_masks, dim=(1, 2)).reshape(-1, 1)/(self.cfg.camera_w*self.cfg.camera_h) 
+
+        # centroid distance
+        distances = compute_distance_to_center_distance(self.fg_masks, self.cfg.camera_w, self.cfg.camera_h).reshape(-1, 1)
         sub_goal_reward = torch.logical_and(self.coverage_ratio_reward>=0.9, self.sub_goal==0)
         self.sub_goal[sub_goal_reward] = 1.
  
@@ -594,7 +597,9 @@ class QuadcopterEnv(DirectRLEnv):
         }
         """
         rewards = {
-            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * fg_ratio.reshape(-1, 1) * self.cfg.occ_reward_scale * rew_mask,
+            #"coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * (fg_ratio.reshape(-1, 1) + 1) * self.cfg.occ_reward_scale * rew_mask,
+            #"coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * (1-distances+1) * self.cfg.occ_reward_scale * rew_mask,
+            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * (1+(1-distances)*(2-1)) * self.cfg.occ_reward_scale * rew_mask,
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
             "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
             "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
@@ -979,9 +984,10 @@ class QuadcopterEnv(DirectRLEnv):
         self._index = -1
 
         self.env_episode[env_ids.cpu().numpy()] += 1
-        #for i in range(5):
-        #    self.sim.step()
-        #    self.scene.update(dt=0)
+        # still need this to stablize the initial viewpoint
+        for i in range(1):
+            self.sim.step()
+            self.scene.update(dt=0)
 
         self.update_observations(env_ids)
 

@@ -493,3 +493,31 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     #print(face_grid.shape)
     #exit()
     return face_grid
+
+def compute_distance_to_center_distance(fg_masks, w, h):
+    image_center = torch.tensor([w / 2, h / 2], device=fg_masks.device)
+    max_distance = torch.norm(image_center)
+
+    # Initialize a list to store centroids
+    centroids = []
+
+    # Loop through each mask in the batch
+    for i in range(fg_masks.size(0)):
+        # Get the non-zero coordinates for the current mask
+        y_coords, x_coords = torch.nonzero(fg_masks[i], as_tuple=True)
+
+        if y_coords.numel() == 0:  # If there are no foreground pixels
+            centroids.append(torch.tensor([w, h], device=fg_masks.device))
+        else:
+            # Compute the centroid by averaging the non-zero coordinates
+            y_mean = y_coords.float().mean()
+            x_mean = x_coords.float().mean()
+            centroids.append(torch.tensor([y_mean, x_mean], device=fg_masks.device))
+
+    # Convert the centroids list into a tensor
+    centroids = torch.stack(centroids)
+
+    # Calculate the Euclidean distance from each centroid to the image center
+    distances = torch.norm(centroids - image_center, dim=1)
+
+    return distances / max_distance
