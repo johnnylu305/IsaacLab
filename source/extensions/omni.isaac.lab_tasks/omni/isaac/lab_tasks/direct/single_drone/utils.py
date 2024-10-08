@@ -479,7 +479,7 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     rays = camera_xyz - occ_grid_xyz
     
     # Normalize rays
-    rays_norm = rays / torch.norm(rays, dim=-1, keepdim=True)+1e-10
+    rays_norm = rays / (torch.norm(rays, dim=-1, keepdim=True)+1e-10)
     
     faces = torch.tensor([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=torch.float32).to(device)
     face_grid = torch.zeros((grid_size, grid_size, grid_size, 6), dtype=torch.bool).to(device)

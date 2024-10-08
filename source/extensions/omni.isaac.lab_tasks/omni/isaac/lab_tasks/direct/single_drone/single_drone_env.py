@@ -78,14 +78,16 @@ class QuadcopterEnv(DirectRLEnv):
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
                 "coverage_ratio",
-                #"penalty",
                 "collision",
-                "more",
                 "goal",
-                "fg",
                 "status coverage_ratio",
-                "sub_goal",
-                "status_obv_face"
+                "status obv_face",
+                "status fg",
+                "status fgc",
+                "status ssim_icr",
+                "status ssim_fg",
+                "status ssim_fgc",
+                "status gi_ssim"
             ]
         }
 
@@ -207,7 +209,7 @@ class QuadcopterEnv(DirectRLEnv):
                 # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
                 scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
             # only use one building
-            #scenes_path = scenes_path[0:256]
+            scenes_path = scenes_path[0:256]
             #scenes_path = scenes_path[0:1]
             self.cfg_list = []
             for scene_path in scenes_path:
@@ -232,6 +234,8 @@ class QuadcopterEnv(DirectRLEnv):
                 #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
                 occ_path = os.path.join(path, "faces.npy")
                 self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
+                #print(torch.sum(self.gt_faces[env_ids[i]]), torch.sum(self.gt_occs[env_ids[i]]), torch.sum(self.gt_faces[env_ids[i]][self.gt_occs[env_ids[i]].bool()]))
+            #exit()
             """
             for i, scene in enumerate(scene_lists):
                 #TODO: change Occ to Occ_new_2000
@@ -472,7 +476,7 @@ class QuadcopterEnv(DirectRLEnv):
                 self.fg_masks[i] = extract_foreground(points_3d_world[i], 0, self.cfg.camera_h, self.cfg.camera_w, mask)
                 self.obv_face[i] = torch.logical_or(self.obv_face[i], 
                                                     get_seen_face(torch.unique(torch.floor((points_3d_world[i][mask]-self._terrain.env_origins[i]+offset)*ratio).int(), dim=0), 
-                                                    torch.floor((camera_pos[i]-self._terrain.env_origins[i]+offset)*ratio), self.cfg.grid_size, self.device))
+                                                    torch.floor((self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio), self.cfg.grid_size, self.device))
             else:
                 self.fg_masks[i] = 0
 
@@ -483,7 +487,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_merge', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_resamplev2', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -520,6 +524,10 @@ class QuadcopterEnv(DirectRLEnv):
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
         self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
 
+
+        face_ratio = torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))
+
+
         # save images
         if self.cfg.save_img:
             for i in self.cfg.save_env_ids:
@@ -527,17 +535,17 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_merge', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_resamplev2', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
                 rew = self.coverage_ratio_reward[i, 0] 
-                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
+                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{face_ratio[i]:.3f}.png'),
                            np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
                            cmap='gray',
                            vmin=0,
                            vmax=20)
-                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.2f}.png'),
+                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{face_ratio[i]:.3f}.png'),
                            rgb_image[i].detach().cpu().numpy().astype(np.uint8))
  
 
@@ -567,9 +575,8 @@ class QuadcopterEnv(DirectRLEnv):
         # update observation first because _get_rewards is after _get_observations
         #self.update_observations()
 
-        hit_face = torch.sum(torch.logical_and(self.obv_face, self.gt_faces))
-        total_face = torch.sum(self.gt_faces)
-        print(hit_face, total_face)
+        hit_face = torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]))
+        total_face = torch.sum(self.gt_faces[:, :, :, 1:, :])
 
         #hard_occ = torch.where(self.obv_occ[:, :, :, 1:, 0] >= 0.6, 1, 0)
 
@@ -583,42 +590,42 @@ class QuadcopterEnv(DirectRLEnv):
 
         # centroid distance
         distances = compute_distance_to_center_distance(self.fg_masks, self.cfg.camera_w, self.cfg.camera_h).reshape(-1, 1)
+        prox = 1.0 - distances
         sub_goal_reward = torch.logical_and(self.coverage_ratio_reward>=0.9, self.sub_goal==0)
         self.sub_goal[sub_goal_reward] = 1.
  
+        ssim_icr = (2*self.coverage_ratio_reward/(self.coverage_ratio_reward**2+1)).reshape(-1, 1)
+        ssim_fg = (2*fg_ratio/(fg_ratio**2+1)).reshape(-1, 1)
+        ssim_fgc = (2*prox/(prox**2+1)).reshape(-1, 1)
+        gi_ssim = ssim_icr * ssim_fg * ssim_fgc
+
         factor = torch.ones(1).to(self.device) * 2
         factor_small = torch.ones(1).to(self.device) * 1
         rew_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
-        """
+        
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
-            "collision": (torch.tensor(self.col).float().to(self.device) * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor_small)).reshape(-1, 1)  * self.cfg.col_reward_scale,
-            "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
-            "goal": (self.coverage_ratio_reward >= self.cfg.goal).int() * torch.exp(-self.env_step.to(self.device)/self.cfg.total_img * factor_small).reshape(-1, 1) * 50. * rew_mask,
-            "fg": (fg_ratio<0.25).int() * torch.exp(-fg_ratio*factor) * -0.1 * rew_mask,
-            "sub_goal": sub_goal_reward.int() * 5. * 0
-        }
-        """
-        rewards = {
-            #"coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * (fg_ratio.reshape(-1, 1) + 1) * self.cfg.occ_reward_scale * rew_mask,
-            #"coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * (1-distances+1) * self.cfg.occ_reward_scale * rew_mask,
-            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * (1+(1-distances)*(2-1)) * self.cfg.occ_reward_scale * rew_mask,
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
-            "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
             "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
-            "fg": (fg_ratio<0.2).int().reshape(-1, 1) * -0.3 * rew_mask * 0,
-            "sub_goal": sub_goal_reward.int() * 5. * 0,
-            #"penalty": (self.coverage_ratio_reward == self.last_coverage_ratio).int().reshape(-1, 1) * -0.5 * rew_mask
         }
-        #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
-        #print(rewards)
-        reward = torch.sum(torch.stack(list(rewards.values())), dim=0).reshape(-1)
+        
+        for k in rewards.keys():
+            rewards[k] /= 100.
 
+        reward = torch.sum(torch.stack(list(rewards.values())), dim=0).reshape(-1)
+        
         # Logging
         for key, value in rewards.items():
             self._episode_sums[key] += value.squeeze(1)
-        self._episode_sums["status coverage_ratio"] = self.coverage_ratio_reward.squeeze() #num_match_occ/total_occ
-        self._episode_sums["status_obv_face"] = torch.sum(torch.logical_and(self.obv_face, self.gt_faces),(1,2,3,4))/torch.sum(self.gt_faces, (1,2,3,4))
+        n = self.cfg.total_img 
+        self._episode_sums["status coverage_ratio"] = self.coverage_ratio_reward.squeeze()
+        self._episode_sums["status obv_face"] = torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))
+        self._episode_sums["status fg"] = (self._episode_sums["status fg"]*(n-1)+fg_ratio.squeeze())/n
+        self._episode_sums["status fgc"] = (self._episode_sums["status fgc"]*(n-1)+prox.squeeze())/n
+        self._episode_sums["status ssim_icr"] = (self._episode_sums["status ssim_icr"]*(n-1)+ssim_icr.squeeze())/n
+        self._episode_sums["status ssim_fg"] = (self._episode_sums["status ssim_fg"]*(n-1)+ssim_fg.squeeze())/n
+        self._episode_sums["status ssim_fgc"] = (self._episode_sums["status ssim_fgc"]*(n-1)+ssim_fgc.squeeze())/n
+        self._episode_sums["status gi_ssim"] = (self._episode_sums["status gi_ssim"]*(n-1)+gi_ssim.squeeze())/n
         #print(self._episode_sums["obv_face"])
         #import pdb; pdb.set_trace()
         for i in range(self.cfg.num_envs):
@@ -648,8 +655,11 @@ class QuadcopterEnv(DirectRLEnv):
                 if self.coverage_ratio_reward.squeeze()[i] >= self.cfg.goal:
                     x, y, z = self.init_vox_pos[i]
                     self.goal_grid[x, y, z] += 1
-        #died = done
-        died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
+                else:
+                    x, y, z = self.init_vox_pos[i]
+                    self.goal_grid[x, y, z] -= 1                   
+        died = done
+        #died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
         return died, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -692,8 +702,26 @@ class QuadcopterEnv(DirectRLEnv):
             extras["Episode Reward/status coverage_ratio"] = self._episode_sums["status coverage_ratio"].clone()
             self._episode_sums["status coverage_ratio"][env_ids] = 0.0
 
-            extras["Episode Reward/status obv face"] = self._episode_sums["status_obv_face"].clone()
-            self._episode_sums["status_obv_face"][env_ids] = 0.0
+            extras["Episode Reward/status obv face"] = self._episode_sums["status obv_face"].clone()
+            self._episode_sums["status obv_face"][env_ids] = 0.0
+
+            extras["Episode Reward/status fg"] = self._episode_sums["status fg"].clone()
+            self._episode_sums["status fg"][env_ids] = 0.0
+
+            extras["Episode Reward/status fgc"] = self._episode_sums["status fgc"].clone()
+            self._episode_sums["status fgc"][env_ids] = 0.0
+
+            extras["Episode Reward/status ssim_icr"] = self._episode_sums["status ssim_icr"].clone()
+            self._episode_sums["status ssim_icr"][env_ids] = 0.0
+
+            extras["Episode Reward/status ssim_fg"] = self._episode_sums["status ssim_fg"].clone()
+            self._episode_sums["status ssim_fg"][env_ids] = 0.0
+
+            extras["Episode Reward/status ssim_fgc"] = self._episode_sums["status ssim_fgc"].clone()
+            self._episode_sums["status ssim_fgc"][env_ids] = 0.0
+
+            extras["Episode Reward/status gi_ssim"] = self._episode_sums["status gi_ssim"].clone()
+            self._episode_sums["status gi_ssim"][env_ids] = 0.0
 
             extras["train_cus/x"] = self.episode_rec["x"].copy()
             extras["train_cus/y"] = self.episode_rec["y"].copy()
@@ -931,7 +959,7 @@ class QuadcopterEnv(DirectRLEnv):
                 #weights = sum(complete_count)-complete_count
                 #weights = weights/sum(weights)
                 # inverse based
-                inverse_count = 1. / np.array(complete_count)
+                inverse_count = 1. / (np.array(complete_count)+np.abs(np.min(complete_count))+1)
                 weights = inverse_count / np.sum(inverse_count)
                 #print(weights)
                 #random_position = random.choices(possible_positions)[0]
