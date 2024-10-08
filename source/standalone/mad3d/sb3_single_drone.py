@@ -30,6 +30,7 @@ simulation_app = app_launcher.app
 import gymnasium as gym
 import torch
 import os
+import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 from stable_baselines3 import PPO
@@ -42,6 +43,8 @@ import omni.isaac.lab_tasks  # noqa: F401
 from omni.isaac.lab_tasks.utils import parse_env_cfg, load_cfg_from_registry
 from omni.isaac.lab_tasks.utils.wrappers.sb3 import Sb3VecEnvWrapper, process_sb3_cfg
 from sb3_encoder import CustomCombinedExtractor
+from stable_baselines3.common.utils import safe_mean
+
 
 class RewardLoggingCallback(BaseCallback):
     def __init__(self, log_dir, verbose=0):
@@ -74,6 +77,149 @@ class RewardLoggingCallback(BaseCallback):
         
     def _on_training_end(self) -> None:
         self.writer.close()                
+
+
+# Define a learning rate schedule function
+def custom_lr_schedule(initial_value, end_value, decrease_end_iteration, total_timesteps):
+    """
+    Custom learning rate schedule that decreases to end_value by decrease_end_iteration
+    and stays constant at end_value after that.
+    
+    :param initial_value: (float) Initial learning rate.
+    :param end_value: (float) The final learning rate after decreasing.
+    :param decrease_end_iteration: (int) The iteration where the learning rate stops decreasing.
+    :param total_timesteps: (int) The total number of timesteps in training.
+    :return: (function) Learning rate schedule function.
+    """
+    def func(progress_remaining):
+        # Calculate the current timestep based on progress_remaining
+        current_step = (1 - progress_remaining) * total_timesteps
+
+        if current_step < decrease_end_iteration:
+            # Linearly decrease the learning rate
+            lr = initial_value - (initial_value - end_value) * (current_step / decrease_end_iteration)
+        else:
+            # After the decrease_end_iteration, keep the learning rate constant at end_value
+            lr = end_value
+        
+        return lr
+    
+    return func
+
+
+# Define a learning rate schedule function with step decay
+def custom_step_decay_lr_schedule(initial_value, decay_factor, decay_interval, min_lr, total_timesteps):
+    """
+    Custom learning rate schedule that decreases by a factor of 'decay_factor' every 'decay_interval' steps,
+    but the learning rate cannot go below 'min_lr'.
+    
+    :param initial_value: (float) Initial learning rate.
+    :param decay_factor: (float) Factor by which to decay the learning rate every 'decay_interval' steps.
+    :param decay_interval: (int) The number of steps after which the learning rate is decayed.
+    :param min_lr: (float) The minimum learning rate (lower bound).
+    :param total_timesteps: (int) The total number of timesteps in training.
+    :return: (function) Learning rate schedule function.
+    """
+    def func(progress_remaining):
+        # Calculate the current timestep based on progress_remaining
+        current_step = (1 - progress_remaining) * total_timesteps
+
+        # Calculate how many decay intervals have passed
+        decay_steps = current_step // decay_interval
+
+        # Calculate the decayed learning rate
+        lr = initial_value / (decay_factor ** decay_steps)
+
+        # Ensure the learning rate doesn't go below the threshold min_lr
+        if lr < min_lr:
+            lr = min_lr
+
+        return lr
+
+    return func
+
+
+class EpisodeMeanLengthCallback(BaseCallback):
+    """
+    Custom callback for tracking the mean episode length during training.
+    """
+    def __init__(self):
+        super().__init__()
+        self.ep_mean_length = 49.
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos")
+        current_step = self.num_timesteps
+
+        temp = []
+        for i, info in enumerate(infos):
+            if info["episode"] is not None:
+                temp.append(info["episode"]["l"])
+
+        if temp != []:
+            self.ep_mean_length = min(np.mean(temp), self.ep_mean_length)
+
+        return True
+
+
+class MeanEpisodeLengthCallback(BaseCallback):
+    """
+    Custom callback for tracking the mean episode length using the built-in 'rollout/ep_len_mean' key.
+    """
+    def __init__(self, ref):
+        super().__init__()
+        self.ref = ref
+        #self.ep_mean_length = 50.
+
+    def _on_step(self) -> bool:
+        # Extract the episode lengths from the buffer
+        episode_lengths = [ep_info['l'] for ep_info in self.model.ep_info_buffer]
+        if not np.isnan(safe_mean(episode_lengths)):
+            self.ref[0] = min(safe_mean(episode_lengths), self.ref[0])
+            #self.ep_mean_length = min(safe_mean(episode_lengths), self.ep_mean_length)
+        #print(f"Mean Episode Length: {self.ep_mean_length}")
+        
+        return True
+
+
+def custom_ep_mean_length_decay_lr_schedule(callback, initial_value, min_lr, ep_mean_thresholds, ep_mean_values):
+    """
+    Custom learning rate schedule that decays according to episode mean length.
+
+    :param callback: (EpisodeMeanLengthCallback) Callback to track episode mean length.
+    :param initial_value: (float) Initial learning rate.
+    :param decay_factor: (float) Factor by which to decay the learning rate when conditions are met.
+    :param min_lr: (float) The minimum learning rate (lower bound).
+    :param ep_mean_thresholds: (list) List of episode mean length thresholds to trigger decay.
+    :param ep_mean_values: (list) List of learning rate divisors corresponding to each threshold.
+    :return: (function) Learning rate schedule function.
+    """
+    
+    def func(progress_remaining):
+        # Get episode mean length from the callback
+        ep_mean_length = callback[0]#.ep_mean_length
+        
+        # Default learning rate if no episode mean length available
+        if ep_mean_length is None:
+            return initial_value
+
+        # Initialize learning rate
+        lr = initial_value
+
+        # Apply different decays based on episode mean length thresholds
+        for i, threshold in enumerate(ep_mean_thresholds):
+            if ep_mean_length < threshold:
+                # Divide learning rate by corresponding value
+                lr /= ep_mean_values[i]
+
+        # Ensure the learning rate doesn't go below the threshold min_lr
+        if lr < min_lr:
+            lr = min_lr
+
+        return lr
+    
+    return func
+
 
 def main():
     """Random actions agent with Isaac Lab environment."""
@@ -108,6 +254,12 @@ def main():
     print(f"[INFO]: Gym action space: {env.action_space}")
 
     # create agent from stable baselines
+    #agent_cfg["learning_rate"] = custom_lr_schedule(3e-4, 1e-5, decrease_end_iteration=3000000, total_timesteps=n_timesteps)
+    #agent_cfg["learning_rate"] = custom_step_decay_lr_schedule(3e-4, 2, 250000, 1e-5, total_timesteps=n_timesteps)
+    # using reference is needed, otherwise it will trigger unpickle error during checkpoint saving
+    ref = [50]
+    ep_mean_length_callback = MeanEpisodeLengthCallback(ref)
+    agent_cfg["learning_rate"] = custom_ep_mean_length_decay_lr_schedule(ref, 1.5e-4, 1e-5, [15, 10, 5], [2, 2, 2])
     agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
     #print(agent.policy)
     #exit()
@@ -116,14 +268,14 @@ def main():
     agent.set_logger(new_logger)
 
     # callbacks for agent
-    # save: save_freq * num_envs
+    # save: save_freq * num_envs 10000
     checkpoint_callback = CheckpointCallback(save_freq=10000, save_path=log_dir, name_prefix="model", verbose=2)
     
     # Instantiate the callback
     reward_logging_callback = RewardLoggingCallback(log_dir, verbose=2)
 
     # train the agent
-    agent.learn(total_timesteps=n_timesteps, callback=[checkpoint_callback, reward_logging_callback])
+    agent.learn(total_timesteps=n_timesteps, callback=[checkpoint_callback, ep_mean_length_callback, reward_logging_callback])
 
     # save the final model
     agent.save(os.path.join(log_dir, "model"))

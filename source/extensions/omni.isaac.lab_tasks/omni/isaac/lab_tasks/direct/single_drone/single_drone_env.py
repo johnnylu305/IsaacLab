@@ -463,7 +463,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_0.999', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_mulrew_lrsch8', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -507,7 +507,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_0.999', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_free0.01_all_nocolend_-1_randweightempty_mulrew_lrsch8', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
@@ -575,7 +575,7 @@ class QuadcopterEnv(DirectRLEnv):
         }
         """
         rewards = {
-            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
+            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask * fg_ratio.int().reshape(-1, 1),
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
             "more": ((self.coverage_ratio_reward - self.last_coverage_ratio) <= 1e-4).int() * -0.005 * self.env_step.to(self.device).reshape(-1, 1) * 0,
             "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
@@ -583,6 +583,11 @@ class QuadcopterEnv(DirectRLEnv):
             "sub_goal": sub_goal_reward.int() * 5. * 0,
             #"penalty": (self.coverage_ratio_reward == self.last_coverage_ratio).int().reshape(-1, 1) * -0.5 * rew_mask
         }
+
+        # Loop over the rewards dictionary and divide each value by 100
+        for key in rewards:
+            rewards[key] = rewards[key] / 100.
+
         #self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
         #print(rewards)
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0).reshape(-1)
