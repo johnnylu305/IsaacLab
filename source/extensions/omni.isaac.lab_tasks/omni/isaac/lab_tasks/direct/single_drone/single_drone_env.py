@@ -85,6 +85,7 @@ class QuadcopterEnv(DirectRLEnv):
                 "status fg",
                 "status fgc",
                 "status ssim_icr",
+                "status ssim_icr_v2",
                 "status ssim_fg",
                 "status ssim_fgc",
                 "status gi_ssim"
@@ -605,6 +606,7 @@ class QuadcopterEnv(DirectRLEnv):
         
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
+            #"coverage_ratio": (ssim_icr*1+1) * self.cfg.occ_reward_scale * rew_mask * (self.coverage_ratio_reward - self.last_coverage_ratio),
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
             "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
         }
@@ -623,6 +625,7 @@ class QuadcopterEnv(DirectRLEnv):
         self._episode_sums["status fg"] = (self._episode_sums["status fg"]*(n-1)+fg_ratio.squeeze())/n
         self._episode_sums["status fgc"] = (self._episode_sums["status fgc"]*(n-1)+prox.squeeze())/n
         self._episode_sums["status ssim_icr"] = (self._episode_sums["status ssim_icr"]*(n-1)+ssim_icr.squeeze())/n
+        self._episode_sums["status ssim_icr_v2"] = (self._episode_sums["status ssim_icr_v2"]*(n-1)+ssim_icr.squeeze()*(self.coverage_ratio_reward - self.last_coverage_ratio).squeeze())/n
         self._episode_sums["status ssim_fg"] = (self._episode_sums["status ssim_fg"]*(n-1)+ssim_fg.squeeze())/n
         self._episode_sums["status ssim_fgc"] = (self._episode_sums["status ssim_fgc"]*(n-1)+ssim_fgc.squeeze())/n
         self._episode_sums["status gi_ssim"] = (self._episode_sums["status gi_ssim"]*(n-1)+gi_ssim.squeeze())/n
@@ -655,7 +658,7 @@ class QuadcopterEnv(DirectRLEnv):
                 if self.coverage_ratio_reward.squeeze()[i] >= self.cfg.goal:
                     x, y, z = self.init_vox_pos[i]
                     self.goal_grid[x, y, z] += 1
-                else:
+                elif (self.env_step.to(self.device) >= self.cfg.total_img - 1)[i]:
                     x, y, z = self.init_vox_pos[i]
                     self.goal_grid[x, y, z] -= 1                   
         died = done
@@ -713,6 +716,9 @@ class QuadcopterEnv(DirectRLEnv):
 
             extras["Episode Reward/status ssim_icr"] = self._episode_sums["status ssim_icr"].clone()
             self._episode_sums["status ssim_icr"][env_ids] = 0.0
+
+            extras["Episode Reward/status ssim_icr_v2"] = self._episode_sums["status ssim_icr_v2"].clone()
+            self._episode_sums["status ssim_icr_v2"][env_ids] = 0.0
 
             extras["Episode Reward/status ssim_fg"] = self._episode_sums["status ssim_fg"].clone()
             self._episode_sums["status ssim_fg"][env_ids] = 0.0
