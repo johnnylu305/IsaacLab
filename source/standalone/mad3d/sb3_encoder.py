@@ -77,7 +77,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                     y_out = (y_out + 2 - 3) // 2 + 1
                     z_out = (z_res + 2 - 3) // 2 + 1
                     z_out = (z_out + 2 - 3) // 2 + 1
-                    extractors[key] = nn.Sequential(nn.Conv3d(in_channels=4, out_channels=16, kernel_size=3, stride=2, padding=1),
+                    extractors[key] = nn.Sequential(nn.Conv3d(in_channels=10, out_channels=16, kernel_size=3, stride=2, padding=1), # 4
                                                     nn.LeakyReLU(),
                                                     nn.Conv3d(in_channels=16, out_channels=32, kernel_size=3, stride=2, padding=1),
                                                     nn.LeakyReLU(),

@@ -80,6 +80,7 @@ class QuadcopterEnv(DirectRLEnv):
                 "coverage_ratio",
                 "collision",
                 "goal",
+                "face_ratio",
                 "status coverage_ratio",
                 "status obv_face",
                 "status fg",
@@ -373,7 +374,7 @@ class QuadcopterEnv(DirectRLEnv):
         # normalize input
         self.single_observation_space["policy"]["pose_step"] = gym.spaces.Box(low=-1., high=1., shape=(self.num_observations+1,))
         self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=0., high=1., shape=(self.cfg.img_t*3, self.cfg.camera_h, self.cfg.camera_w))
-        self.single_observation_space["policy"]["occ"] = gym.spaces.Box(low=-1., high=1., shape=(4, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size))
+        self.single_observation_space["policy"]["occ"] = gym.spaces.Box(low=-1., high=1., shape=(10, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size)) # 4
         self.single_action_space = gym.spaces.Box(low=-1, high=1, shape=(self.num_actions,))
 
         # batch the spaces for vectorized environments
@@ -488,7 +489,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_resamplev2', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_face', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -536,7 +537,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_resamplev2', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_face', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
@@ -559,9 +560,13 @@ class QuadcopterEnv(DirectRLEnv):
         
         pose_step = torch.cat([self.obv_pose_history.reshape(self.cfg.num_envs, -1), 
                                self.env_step.to(self.device).reshape(self.cfg.num_envs, -1)/self.cfg.total_img], dim=1)
+
+        occ_face = torch.cat((self.obv_occ, self.obv_face), dim=-1)
+
         obs = {"pose_step": pose_step,
                "img": self.obv_imgs.permute(0, 1, 4, 2, 3).reshape(-1, 3 * self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w),
-               "occ": self.obv_occ.permute(0, 4, 1, 2, 3),
+               #"occ": self.obv_occ.permute(0, 4, 1, 2, 3),
+               "occ": occ_face.permute(0, 4, 1, 2, 3),
               }
         #print(obs["pose"][0].reshape(50, 5))
         #print("A", obs["img"][0].reshape(2, 3, 300, 300)[0])
@@ -604,9 +609,12 @@ class QuadcopterEnv(DirectRLEnv):
         factor_small = torch.ones(1).to(self.device) * 1
         rew_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
         
+        face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
+
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
-            #"coverage_ratio": (ssim_icr*1+1) * self.cfg.occ_reward_scale * rew_mask * (self.coverage_ratio_reward - self.last_coverage_ratio),
+            "face_ratio": face_ratio * rew_mask * self.cfg.occ_reward_scale,
+            #"coverage_ratio": (ssim_icr*1+0) * self.cfg.occ_reward_scale * rew_mask * (self.coverage_ratio_reward - self.last_coverage_ratio),
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
             "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
         }
