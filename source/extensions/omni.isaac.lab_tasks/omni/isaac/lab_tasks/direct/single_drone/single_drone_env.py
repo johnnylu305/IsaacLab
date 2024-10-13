@@ -55,7 +55,7 @@ from omni.physx import get_physx_scene_query_interface
 from omni.isaac.core.articulations import ArticulationView
 import omni.isaac.core.utils.prims as prim_utils
 
-from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground, get_seen_face, compute_distance_to_center_distance
+from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground, get_seen_face, compute_distance_to_center_distance, remove_occluded_face
 import time
 from omni.isaac.lab.markers import VisualizationMarkers
 import open3d as o3d 
@@ -163,6 +163,9 @@ class QuadcopterEnv(DirectRLEnv):
         self.coverage_ratio_reward = torch.zeros(self.cfg.num_envs,  device=self.device).reshape(-1, 1)
         self.sub_goal = torch.zeros(self.cfg.num_envs,  device=self.device).reshape(-1, 1)
 
+        self.last_face_ratio = torch.zeros(self.cfg.num_envs, device=self.device).reshape(-1, 1)
+        self.face_ratio = torch.zeros(self.cfg.num_envs,  device=self.device).reshape(-1, 1)
+ 
         # terrain
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -279,9 +282,9 @@ class QuadcopterEnv(DirectRLEnv):
         self._actions = actions.clone()
         self._xyz = self._actions[:, :3]
         # TODO tune z
-        # x: -9.5~9.5, y: -9.5~9.5, z: 0~14
+        # x: -9.5~9.5, y: -9.5~9.5, z: 0~10
         # using 9.5 instead of 10 to avoid boundary case for collision detection
-        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 0.6*self.cfg.env_size/4.0]).to(self.device)
+        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 1.0*self.cfg.env_size/4.0]).to(self.device)
         #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([0, self.cfg.env_size/2.0, 0.6*self.cfg.env_size/4.0]).to(self.device)
 
         self._yaw = self._actions[:,3]*torch.pi
@@ -292,6 +295,7 @@ class QuadcopterEnv(DirectRLEnv):
         num_match_occ = torch.sum(torch.logical_and(hard_occ, self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
         self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
+        self.last_face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
 
     def _apply_action(self):
         if self.cfg.preplan:
@@ -520,14 +524,22 @@ class QuadcopterEnv(DirectRLEnv):
                         #create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
                         #                             vis_occ[j, :, :, i], cell_size, i*slice_height, i, self.cfg.env_size, 0, 30)
 
-        hard_occ = torch.where(self.obv_occ[:, :, :, 1:, 0] >= 0.6, 1, 0)
+        hard_occ = torch.where(self.obv_occ[:, :, :, :, 0] >= 0.6, 1, 0)
+
+
+        #print(torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :])))
+        # remove the occluded face by checking current occ grid
+        # the face amount may still larger than gt because current occ grid is incomplete
+        self.obv_face = remove_occluded_face(self.cfg.grid_size, hard_occ, self.obv_face, self.device)
+        #print(torch.sum(self.obv_face[:, :, :, 1:]))
+        
+
+        hard_occ = hard_occ[:, :, :, 1:]
 
         num_match_occ = torch.sum(torch.logical_and(hard_occ, self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
         self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
-
-
-        face_ratio = torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))
+        self.face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
 
 
         # save images
@@ -542,12 +554,12 @@ class QuadcopterEnv(DirectRLEnv):
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
                 rew = self.coverage_ratio_reward[i, 0] 
-                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{face_ratio[i]:.3f}.png'),
+                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{self.face_ratio[i][0]:.3f}.png'),
                            np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
                            cmap='gray',
                            vmin=0,
                            vmax=20)
-                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{face_ratio[i]:.3f}.png'),
+                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{self.face_ratio[i][0]:.3f}.png'),
                            rgb_image[i].detach().cpu().numpy().astype(np.uint8))
  
 
@@ -609,14 +621,15 @@ class QuadcopterEnv(DirectRLEnv):
         factor_small = torch.ones(1).to(self.device) * 1
         rew_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
         
-        face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
+        #face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
 
         rewards = {
             "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
-            "face_ratio": face_ratio * rew_mask * self.cfg.occ_reward_scale,
+            "face_ratio": (self.face_ratio-self.last_face_ratio) * rew_mask * self.cfg.occ_reward_scale,
             #"coverage_ratio": (ssim_icr*1+0) * self.cfg.occ_reward_scale * rew_mask * (self.coverage_ratio_reward - self.last_coverage_ratio),
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
-            "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
+            #"goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
+            "goal": (self.face_ratio >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
         }
         
         for k in rewards.keys():
@@ -653,7 +666,8 @@ class QuadcopterEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
        
         # TODO enable this when using goal reward
-        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
+        #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
+        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.face_ratio.squeeze() >= self.cfg.goal)
         #done = self.env_step.to(self.device) >= self.cfg.total_img - 1
 
         
@@ -765,6 +779,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.obv_face[env_ids] = 0
 
         self.last_coverage_ratio[env_ids] = 0
+        self.last_face_ratio[env_ids] = 0
         self.sub_goal[env_ids] = 0
         self.fg_masks[env_ids] = 0
         

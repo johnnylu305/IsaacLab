@@ -494,6 +494,52 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     #exit()
     return face_grid
 
+def remove_occluded_face(grid_size, obv_grid, face_grid, device):
+
+    faces = torch.tensor([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=torch.float32).to(device)
+
+
+    face_grid = face_grid.bool()
+    # Mask out faces where the obv_grid is non-occupied (obv_grid == 0)
+    non_occupied_mask = obv_grid == 0
+    face_grid[non_occupied_mask.unsqueeze(-1).expand(-1, -1, -1, -1, 6)] = False
+
+    # remove occluded face
+    # Identify visible faces in the grid
+    visible_indices = torch.nonzero(face_grid, as_tuple=True)
+
+    # Get indices and directions for occupied voxels
+    env_idx, x, y, z, face_idx = visible_indices
+
+    # Shift directions based on face index to find adjacent voxel positions
+    shifts = faces[face_idx]  # Extract the shift for each visible face
+    adj_x = x + shifts[:, 0].long()
+    adj_y = y + shifts[:, 1].long()
+    adj_z = z + shifts[:, 2].long()
+
+    # Ensure adjacent positions are within bounds
+    valid_mask = (
+        (adj_x >= 0) & (adj_x < grid_size) &
+        (adj_y >= 0) & (adj_y < grid_size) &
+        (adj_z >= 0) & (adj_z < grid_size)
+    )
+    env_idx = env_idx[valid_mask]
+    x, y, z = x[valid_mask], y[valid_mask], z[valid_mask]
+    adj_x = adj_x[valid_mask]
+    adj_y = adj_y[valid_mask]
+    adj_z = adj_z[valid_mask]
+    face_idx = face_idx[valid_mask]
+
+    # Check if the adjacent voxel is occupied, making the face occluded
+    occluded_mask = obv_grid[env_idx, adj_x, adj_y, adj_z] == 1
+
+    face_grid = face_grid.bool()
+
+    # Update the face_grid to mark occluded faces as False
+    face_grid[env_idx, x, y, z, face_idx] = ~occluded_mask 
+    
+    return face_grid
+
 def compute_distance_to_center_distance(fg_masks, w, h):
     image_center = torch.tensor([w / 2, h / 2], device=fg_masks.device)
     max_distance = torch.norm(image_center)
