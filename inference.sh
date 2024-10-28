@@ -1,0 +1,1 @@
+python source/standalone/mad3d/play.py --task=Isaac-Quadcopter-Direct-v1 --num_envs 1 --enable_cameras --checkpoint /home/hat/Documents/IsaacLab/logs/sb3/Isaac-Quadcopter-Direct-v1/2024-10-04_17-11-31_gennbv/model_13568000_steps.zip

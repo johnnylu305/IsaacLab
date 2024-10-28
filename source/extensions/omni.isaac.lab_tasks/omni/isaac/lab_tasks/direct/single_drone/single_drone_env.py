@@ -61,6 +61,9 @@ from omni.isaac.lab.markers import VisualizationMarkers
 import open3d as o3d 
 from .utils import merge_point_clouds
 import re
+import csv
+import torch.nn.functional as F
+from .get_rescaled_depth import get_rescaled_depths
 
 cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
 cfg.markers["hit"].radius = 0.002
@@ -93,12 +96,28 @@ class QuadcopterEnv(DirectRLEnv):
             ]
         }
 
+        self.duster_log = {
+            key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            for key in [
+                "intrinsic",
+                "extrinsic",
+                "rgb",
+                "depth_gt"
+            ]
+        }
+
+        header = self._episode_sums.keys()
+        with open('output.csv', 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(header)  # Write header
+
         self.episode_rec = dict()
         self.episode_rec["x"] = [[] for i in range(self.num_envs)]
         self.episode_rec["y"] = [[] for i in range(self.num_envs)]
         self.episode_rec["z"] = [[] for i in range(self.num_envs)]
         self.episode_rec["pitch"] = [[] for i in range(self.num_envs)]
         self.episode_rec["yaw"] = [[] for i in range(self.num_envs)]
+        
 
     def _setup_scene(self):
 
@@ -137,7 +156,8 @@ class QuadcopterEnv(DirectRLEnv):
         self.robot_pos = torch.zeros((self.cfg.num_envs, 3), device=self.device)
         # pitch, yaw
         self.robot_ori = torch.zeros((self.cfg.num_envs, 2), device=self.device)
-
+        self.rgb_duster = torch.empty(0).cuda()
+        self.T_duster = torch.empty(0).cuda()
         # obv
         # it should start from 0 instead of -1 because we need one obv for initial action
         self.env_step = torch.ones(self.cfg.num_envs,) * 0
@@ -169,7 +189,6 @@ class QuadcopterEnv(DirectRLEnv):
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         rescale_scene(scene_prim_root="/World/ground/Environment", max_len=13e4)
  
-
         # prevent mirror
         self.scene.clone_environments(copy_from_source=True)#True)
 
@@ -202,7 +221,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.init_vox_pos = np.zeros((self.num_envs, 3)).astype(np.int32)
 
         # scene
-        if not self.cfg.preplan:
+        if not self.cfg.preplan and not self.cfg.test:
             scenes_path = []
             # Loop over each batch number
             for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
@@ -211,7 +230,7 @@ class QuadcopterEnv(DirectRLEnv):
                 # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
                 scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
             # only use one building
-            scenes_path = scenes_path[0:256]
+            scenes_path = scenes_path[:self.num_envs]
             #scenes_path = scenes_path[0:1]
             self.cfg_list = []
             for scene_path in scenes_path:
@@ -237,21 +256,45 @@ class QuadcopterEnv(DirectRLEnv):
                 occ_path = os.path.join(path, "faces.npy")
                 self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
                 #print(torch.sum(self.gt_faces[env_ids[i]]), torch.sum(self.gt_occs[env_ids[i]]), torch.sum(self.gt_faces[env_ids[i]][self.gt_occs[env_ids[i]].bool()]))
-            #exit()
-            """
+        self.test_scene_id = 0
+        
+        if self.cfg.test:
+            scenes_path = []
+            # Loop over each batch number
+            for batch_num in range(7, 13):  # Range goes from 1 to 6 inclusive
+                # Generate the path pattern for the glob function
+                path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
+                scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
+            # only use one building
+            scenes_path = scenes_path[self.test_scene_id:self.test_scene_id+self.num_envs]
+            #scenes_path = scenes_path[0:1]
+            self.scenes_path = scenes_path
+            self.test_scene_id = self.test_scene_id+self.num_envs
+            self.cfg_list = []
+            for scene_path in scenes_path:
+                self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
+
+            _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+                                                            env_ids=torch.arange(self.cfg.num_envs), my_asset_list=self.cfg_list)
+
+            env_ids = torch.arange(self.cfg.num_envs)
             for i, scene in enumerate(scene_lists):
-                #TODO: change Occ to Occ_new_2000
+                #TODO: chnage Occ to Occ_new_2000
                 path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
                 occ_path = os.path.join(path, "fill_occ_set.pkl")
                 # To load the occupied voxels from the file
+                # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
                 with open(occ_path, 'rb') as file:
-                    self.occs[env_ids[i]] = pickle.load(file)      
-
-            for i, scene in enumerate(scene_lists):
-                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
+                    self.occs[env_ids[i]] = pickle.load(file)    
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
+                #print(path)
                 occ_path = os.path.join(path, "occ.npy")
                 self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
-            """
+                #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
+                occ_path = os.path.join(path, "faces.npy")
+                self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
+
         self.fg_masks = torch.zeros((self.cfg.num_envs, self.cfg.camera_h, self.cfg.camera_w)).to(self.device)
         self.point_cloud = o3d.geometry.PointCloud()
         self.scene_id=0
@@ -303,7 +346,20 @@ class QuadcopterEnv(DirectRLEnv):
             target_orientation = target_orientation.repeat(self.num_envs,1)
             yaw = yaw * torch.ones(self.num_envs,).to(self.device)
             pitch_radians = 0.1 * torch.ones(self.num_envs,).to(self.device)
-            
+        elif self.cfg.duster and self._index<=3:
+            possible_pos = [[1,1],[0.9,0.8],[0.8,0.9],[0.7,0.9]]
+            target_position = np.array([self.cfg.env_size//2*possible_pos[self._index][0]-1, self.cfg.env_size//2*possible_pos[self._index][1]-1, self.cfg.env_size//4-1])
+            yaw, pitch = compute_orientation(target_position)
+            # TODO empty scene
+            #yaw *= -1
+            target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
+            target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
+            target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
+            #import pdb; pdb.set_trace()
+            self._yaw = torch.tensor([yaw]).cuda().float()
+            self._pitch = torch.tensor([pitch]).cuda().float()
+            yaw = self._yaw
+            pitch_radians = -self._pitch
         else:
             target_position = self._xyz
             pitch_radians = self._pitch
@@ -394,7 +450,25 @@ class QuadcopterEnv(DirectRLEnv):
         #print(depth_image)
         #depth_image = self._camera.data.output["depth"][:,:,:,0].clone()
         rgb_image = self._camera.data.output["rgb"].clone()
-       
+
+        if self.cfg.duster:
+            rgb_image_ori = rgb_image.clone()
+            depth_image_ori = depth_image.clone()
+            # Permute the RGB image to match PyTorch's (N, C, H, W) format
+            rgb_image = rgb_image.permute(0, 3, 1, 2)  # Now shape: [1, 3, 384, 512]
+
+            # Resize the RGB image to 300x300
+            rgb_image = F.interpolate(rgb_image, size=(self.cfg.camera_w, self.cfg.camera_h), mode='nearest')
+
+            # Resize the depth image to 300x300
+            depth_image = F.interpolate(depth_image.unsqueeze(1), size=(self.cfg.camera_w, self.cfg.camera_h), mode='nearest')
+
+            # Permute RGB image back to (N, H, W, C) format
+            rgb_image = rgb_image.permute(0, 2, 3, 1)  # Now shape: [1, 300, 300, 3]
+
+            # Squeeze the depth image back to [1, 300, 300]
+            depth_image = depth_image.squeeze(1)
+        
  
         for i in env_ids:
             self.obv_imgs[i][1] = self.obv_imgs[i][0]
@@ -424,6 +498,22 @@ class QuadcopterEnv(DirectRLEnv):
         camera_pos = self._camera.data.pos_w.clone()
         camera_quat = self._camera.data.quat_w_ros.clone()
         
+        if self.cfg.duster:
+            # Original and new image sizes
+            H_orig, W_orig = 384, 512
+            H_new, W_new = 300, 300
+
+            # Calculate scaling factors
+            scale_x = W_new / W_orig
+            scale_y = H_new / H_orig
+
+            # Update the intrinsic matrix
+            K_new = intrinsic_matrix.clone()
+            K_new[0,0, 0] *= scale_x  # f_x
+            K_new[0,1, 1] *= scale_y  # f_y
+            K_new[0,0, 2] *= scale_x  # c_x
+            K_new[0,1, 2] *= scale_y  # c_y
+            intrinsic_matrix = K_new
                 
         #depth_image = dis_to_z(depth_image, intrinsic_matrix)
         # prevent inf
@@ -528,9 +618,59 @@ class QuadcopterEnv(DirectRLEnv):
 
 
         face_ratio = torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))
+        
+        if self.cfg.duster:
+            intrinsic_matrix = self._camera.data.intrinsic_matrices.clone()
+            camera_pos = self._camera.data.pos_w.clone()[0]
+            camera_quat = self._camera.data.quat_w_ros.clone()[0]
 
+            # Normalize the quaternion to ensure it's a unit quaternion
+            camera_quat = camera_quat / torch.norm(camera_quat)
+
+            # Extract the quaternion components
+            w, x, y, z = camera_quat
+
+            # Construct the rotation matrix from the quaternion
+            R = torch.tensor([
+                [1 - 2 * (y**2 + z**2), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                [2 * (x * y + z * w), 1 - 2 * (x**2 + z**2), 2 * (y * z - x * w)],
+                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x**2 + y**2)]
+            ], device='cuda:0')
+
+            # Construct the 4x4 transformation matrix
+            T = torch.eye(4, device='cuda:0')  # Start with an identity matrix
+            T[:3, :3] = R                      # Set the rotation part
+            T[:3, 3] = camera_pos              # Set the translation part
+
+            print(T)
+            #import pdb; pdb.set_trace()
+            
+            self.rgb_duster = torch.cat([self.rgb_duster,rgb_image_ori])
+            self.T_duster = torch.cat([self.T_duster, T.unsqueeze(0)])
+            if self.rgb_duster.shape[0]>4:
+                #with torch.no_grad():
+                get_rescaled_depths(self.rgb_duster[1:].cpu().numpy().astype(np.uint8) , self.T_duster[1:].cpu().numpy() )
+
+            for i in self.cfg.save_env_ids:
+                if i >= self.num_envs:
+                    break
+                if self.env_episode[i]%self.cfg.save_img_freq != 0:
+                    continue
+                root_path = os.path.join('duster_image', f'{self.env_episode[i]}')
+                os.makedirs(root_path, exist_ok=True)
+                #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
+                x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
+                rew = self.coverage_ratio_reward[i, 0] 
+                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{face_ratio[i]:.3f}.png'),
+                           np.clip(depth_image_ori[i].detach().cpu().numpy(),0,20).astype(np.uint8),
+                           cmap='gray',
+                           vmin=0,
+                           vmax=20)
+                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{face_ratio[i]:.3f}.png'),
+                           rgb_image_ori[i].detach().cpu().numpy().astype(np.uint8))
 
         # save images
+        #import pdb; pdb.set_trace()
         if self.cfg.save_img:
             for i in self.cfg.save_env_ids:
                 if i >= self.num_envs:
@@ -591,7 +731,6 @@ class QuadcopterEnv(DirectRLEnv):
         #print("Cov", num_match_occ/total_occ, self.last_coverage_ratio)
         #print(torch.sum(torch.where(self.obv_occ[:, :, :, 1:, 0]==2, 1, 0), dim=(1, 2, 3))/total_occ)
         #self.coverage_ratio_reward = (num_match_occ/total_occ).reshape(-1, 1)
-        
         fg_ratio = torch.sum(self.fg_masks, dim=(1, 2)).reshape(-1, 1)/(self.cfg.camera_w*self.cfg.camera_h) 
 
         # centroid distance
@@ -616,7 +755,8 @@ class QuadcopterEnv(DirectRLEnv):
             "face_ratio": face_ratio * rew_mask * self.cfg.occ_reward_scale,
             #"coverage_ratio": (ssim_icr*1+0) * self.cfg.occ_reward_scale * rew_mask * (self.coverage_ratio_reward - self.last_coverage_ratio),
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
-            "goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
+            #"goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
+            "goal": (face_ratio>= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
         }
         
         for k in rewards.keys():
@@ -628,15 +768,15 @@ class QuadcopterEnv(DirectRLEnv):
         for key, value in rewards.items():
             self._episode_sums[key] += value.squeeze(1)
         n = self.cfg.total_img 
-        self._episode_sums["status coverage_ratio"] = self.coverage_ratio_reward.squeeze()
+        self._episode_sums["status coverage_ratio"] = self.coverage_ratio_reward.reshape(-1, 1)
         self._episode_sums["status obv_face"] = torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))
-        self._episode_sums["status fg"] = (self._episode_sums["status fg"]*(n-1)+fg_ratio.squeeze())/n
-        self._episode_sums["status fgc"] = (self._episode_sums["status fgc"]*(n-1)+prox.squeeze())/n
-        self._episode_sums["status ssim_icr"] = (self._episode_sums["status ssim_icr"]*(n-1)+ssim_icr.squeeze())/n
-        self._episode_sums["status ssim_icr_v2"] = (self._episode_sums["status ssim_icr_v2"]*(n-1)+ssim_icr.squeeze()*(self.coverage_ratio_reward - self.last_coverage_ratio).squeeze())/n
-        self._episode_sums["status ssim_fg"] = (self._episode_sums["status ssim_fg"]*(n-1)+ssim_fg.squeeze())/n
-        self._episode_sums["status ssim_fgc"] = (self._episode_sums["status ssim_fgc"]*(n-1)+ssim_fgc.squeeze())/n
-        self._episode_sums["status gi_ssim"] = (self._episode_sums["status gi_ssim"]*(n-1)+gi_ssim.squeeze())/n
+        self._episode_sums["status fg"] = (self._episode_sums["status fg"]*(n-1)+fg_ratio.reshape(-1, 1))/n
+        self._episode_sums["status fgc"] = (self._episode_sums["status fgc"]*(n-1)+prox.reshape(-1, 1))/n
+        self._episode_sums["status ssim_icr"] = (self._episode_sums["status ssim_icr"]*(n-1)+ssim_icr.reshape(-1, 1))/n
+        self._episode_sums["status ssim_icr_v2"] = (self._episode_sums["status ssim_icr_v2"]*(n-1)+ssim_icr.squeeze()*(self.coverage_ratio_reward - self.last_coverage_ratio).reshape(-1, 1))/n
+        self._episode_sums["status ssim_fg"] = (self._episode_sums["status ssim_fg"]*(n-1)+ssim_fg.reshape(-1, 1))/n
+        self._episode_sums["status ssim_fgc"] = (self._episode_sums["status ssim_fgc"]*(n-1)+ssim_fgc.reshape(-1, 1)/n)
+        self._episode_sums["status gi_ssim"] = (self._episode_sums["status gi_ssim"]*(n-1)+gi_ssim.reshape(-1, 1))/n
         #print(self._episode_sums["obv_face"])
         #import pdb; pdb.set_trace()
         for i in range(self.cfg.num_envs):
@@ -653,7 +793,12 @@ class QuadcopterEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
        
         # TODO enable this when using goal reward
-        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
+        #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
+        face_ratio = torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))
+        if not self.cfg.test:
+            done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, face_ratio.squeeze() >= self.cfg.goal)
+        else:
+            done = self.env_step.to(self.device) >= 20
         #done = self.env_step.to(self.device) >= self.cfg.total_img - 1
 
         
@@ -663,7 +808,7 @@ class QuadcopterEnv(DirectRLEnv):
             time_out = time_out*0
         else:
             for i in range(self.num_envs):
-                if self.coverage_ratio_reward.squeeze()[i] >= self.cfg.goal:
+                if self.coverage_ratio_reward.reshape(-1, 1)[i] >= self.cfg.goal:
                     x, y, z = self.init_vox_pos[i]
                     self.goal_grid[x, y, z] += 1
                 elif (self.env_step.to(self.device) >= self.cfg.total_img - 1)[i]:
@@ -680,6 +825,58 @@ class QuadcopterEnv(DirectRLEnv):
 
         self._robot.reset(env_ids)
         super()._reset_idx(env_ids)
+
+        if self.cfg.test:
+            if self.test_scene_id >1:
+                # Create a list of values
+                values = [value.item() for value in self._episode_sums.values()]
+                #import pdb; pdb.set_trace()
+                
+                rows = values + [self.test_scene_id] + self.scenes_path
+
+                # Save to CSV
+                with open('output.csv', 'a', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(rows)    # Write data rows
+
+            for env_id in env_ids:
+                delete_prim(f'/World/envs/env_{env_id}/Scene')
+            scenes_path = []
+            # Loop over each batch number
+            for batch_num in range(7, 13):  # Range goes from 1 to 6 inclusive
+                # Generate the path pattern for the glob function
+                path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
+                scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
+            # only use one building
+            scenes_path = scenes_path[self.test_scene_id:self.test_scene_id+len(env_ids)]
+            #scenes_path = scenes_path[0:1]
+            self.scenes_path = scenes_path
+            self.test_scene_id = self.test_scene_id+len(env_ids)
+            self.cfg_list = []
+            for scene_path in scenes_path:
+                self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
+
+            _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+                                                            env_ids=env_ids, my_asset_list=self.cfg_list)
+
+            #import pdb; pdb.set_trace()
+            for i, scene in enumerate(scene_lists):
+                #TODO: chnage Occ to Occ_new_2000
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+                occ_path = os.path.join(path, "fill_occ_set.pkl")
+                # To load the occupied voxels from the file
+                # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
+                with open(occ_path, 'rb') as file:
+                    self.occs[env_ids[i]] = pickle.load(file)    
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
+                #print(path)
+                occ_path = os.path.join(path, "occ.npy")
+                self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
+                #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
+                occ_path = os.path.join(path, "faces.npy")
+                self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
+    
 
         #if len(env_ids) == self.num_envs:
             # Spread out the resets to avoid spikes in training when many environments reset at a similar time
@@ -700,6 +897,11 @@ class QuadcopterEnv(DirectRLEnv):
         #     np.save('test.npy', updated_data)
 
         # Logging
+
+        
+        for i in range(1):
+            self.sim.step()
+            self.scene.update(dt=0)
 
         if not self.cfg.preplan:
             extras = dict()
@@ -1039,9 +1241,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.env_episode[env_ids.cpu().numpy()] += 1
         # still need this to stablize the initial viewpoint
-        for i in range(1):
-            self.sim.step()
-            self.scene.update(dt=0)
+
 
         self.update_observations(env_ids)
 

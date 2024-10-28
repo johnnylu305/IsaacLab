@@ -61,6 +61,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     save_env_ids = [0, 1]
     save_img_freq = 30 #10
     random_initial = True #False
+    test = True
+    duster = True
 
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 60 #30 # in meter, 2 cells is one unit
@@ -150,7 +152,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
    #      width=camera_w,
    #      height=camera_h,
    #)
-
+    
     camera: TiledCameraCfg = TiledCameraCfg(
         prim_path="/World/envs/env_.*/Camera",
         offset=TiledCameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
@@ -166,6 +168,23 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         height=camera_h,
       
     )
+
+    if duster:
+        camera: TiledCameraCfg = TiledCameraCfg(
+        prim_path="/World/envs/env_.*/Camera",
+        offset=TiledCameraCfg.OffsetCfg(pos=camera_offset, convention="world"),
+        update_period=0, # update every physical step
+        data_types=["rgb", "distance_to_image_plane"],
+        spawn=sim_utils.PinholeCameraCfg(
+            focal_length=13.8, # in cm default 24, dji 1.38
+            #focus_distance=1.0, # in m 
+            horizontal_aperture=24., # in mm 
+            clipping_range=(0.2, 60.0) # near and far plane in meter
+        ),
+        width=512,
+        height=384,
+      
+        )
 
     # setup interactive scene for rl training
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=num_envs, 
