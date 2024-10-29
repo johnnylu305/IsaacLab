@@ -453,11 +453,15 @@ def run_simulator(sim, scene_entities, output):
     output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output")
     os.makedirs(output_dir, exist_ok=True)
 
-    env_size = 20
-    radius = env_size/2.0 * 1.5 # Radius of the cylinder
-    height = env_size/2.0 * 2. # Height of the cylinder
+    #env_size = 20
+    env_size = 10
+    #radius = env_size/2.0 * 1.5 # Radius of the cylinder
+    radius = env_size/2.0 * 2.5 # Radius of the cylinder
+    #height = env_size/2.0 * 2. # Height of the cylinder
+    height = env_size/2.0 * 3. # Height of the cylinder
     #theta = [0, np.pi/2., np.pi, np.pi*3/2]
     theta = np.linspace(0,6*np.pi, 120)#200)
+    #theta = np.linspace(0,6*np.pi, 10)#200)
     num_points = len(theta)
     x = radius * np.cos(theta)
     y = radius * np.sin(theta)

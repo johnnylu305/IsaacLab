@@ -87,6 +87,8 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
         # resolve mesh name and format
         mesh_file_basename, mesh_file_format = os.path.basename(cfg.asset_path).split(".")
         mesh_file_format = mesh_file_format.lower()
+        
+        mesh_file_basename = 'a' + mesh_file_basename
 
         # Convert USD
         asyncio.get_event_loop().run_until_complete(
@@ -200,6 +202,7 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
         Returns:
             True if the conversion succeeds.
         """
+        #prim_path = '/a'+prim_path[1:]
         enable_extension("omni.kit.asset_converter")
         enable_extension("omni.usd.metrics.assembler")
 
@@ -241,7 +244,7 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
         UsdGeom.SetStageUpAxis(temp_stage, UsdGeom.Tokens.z)
         UsdGeom.SetStageMetersPerUnit(temp_stage, 1.0)
         UsdPhysics.SetStageKilogramsPerUnit(temp_stage, 1.0)
-
+        #import pdb; pdb.set_trace()
         base_prim = temp_stage.DefinePrim(prim_path, "Xform")
         prim = temp_stage.DefinePrim(f"{prim_path}/geometry", "Xform")
         prim.GetReferences().AddReference(out_file_non_metric)
@@ -301,6 +304,56 @@ def get_minmax_mesh_coordinates(mesh_prim):
     return max_coords, min_coords
 
 
+def get_centroid(stage, mesh_prim_path):
+    # Access the mesh's point positions in local space
+    
+    num_points=0
+    centroid = Gf.Vec3f(0.0, 0.0, 0.0)
+    min_z = float('inf')
+    
+    for prim_path in mesh_prim_path:
+        mesh_prim = stage.GetPrimAtPath(prim_path)
+        max_coords, min_coords = get_minmax_mesh_coordinates(mesh_prim)
+        
+        mesh = UsdGeom.Mesh(mesh_prim)
+        points_attr = mesh.GetPointsAttr()
+        points = points_attr.Get()
+    
+        # Get the world transformation matrix for the mesh
+        xformable = UsdGeom.Xformable(mesh_prim)
+        world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    
+        # Transform each point to world coordinates
+        transformed_points = [world_transform.Transform(point) for point in points]
+    
+        # Initialize min/max coordinates and centroid
+        max_coords = Gf.Vec3f(float('-inf'), float('-inf'), float('-inf'))
+        min_coords = Gf.Vec3f(float('inf'), float('inf'), float('inf'))
+        
+    
+        # Calculate min/max coordinates and accumulate for centroid
+        num_points += len(transformed_points)
+        for point in transformed_points:
+            max_coords[0] = max(max_coords[0], point[0])
+            max_coords[1] = max(max_coords[1], point[1])
+            max_coords[2] = max(max_coords[2], point[2])
+    
+            min_coords[0] = min(min_coords[0], point[0])
+            min_coords[1] = min(min_coords[1], point[1])
+            min_coords[2] = min(min_coords[2], point[2])
+            
+            min_z = min(min_z, min_coords[2])
+    
+            # Add the point to the centroid accumulator
+            centroid += point
+
+    # Calculate the centroid by dividing the sum of points by the number of points
+    if num_points > 0:
+        centroid /= num_points
+    
+    centroid[2] = min_z
+    return centroid
+
 def get_scale(stage, mesh_prim_path, desired_len):
     
     max_x, max_y, max_z = -1e10, -1e10, -1e10
@@ -330,6 +383,12 @@ def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
     print(mesh_prim_path)
 
     scale_factor = get_scale(stage, mesh_prim_path, max_len)
+    #import pdb; pdb.set_trace()
+    centroid = get_centroid(stage, mesh_prim_path)
+    print("centriod: ", centroid)
+    shift_x = -centroid[0]
+    shift_y = -centroid[1]
+    shift_z = -centroid[2]
     print(scale_factor)
     print(f"Scaling factor: {scale_factor}")
 
@@ -338,7 +397,19 @@ def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
     for prim_path in mesh_prim_path:
         mesh_prim = stage.GetPrimAtPath(prim_path)
         xform = UsdGeom.Xformable(mesh_prim)
+        
+        shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
         scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
+        
         xform.ClearXformOpOrder()  # Clear any existing transformations
-        xform.AddTransformOp().Set(scale_transform)
+        # Add translation first, then scale
+        
+        shift_op = xform.AddTransformOp()
+        shift_op.Set(shift_transform)
+        
+        xform.ClearXformOpOrder()
+        scale_op = xform.AddTransformOp()
+        scale_op.Set(scale_transform)
+    
+
 

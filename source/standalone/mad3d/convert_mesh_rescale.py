@@ -121,7 +121,7 @@ def run_convert(mesh_path, dest_path):
 
     # Collision properties
     collision_props = schemas_cfg.CollisionPropertiesCfg(collision_enabled=args_cli.collision_approximation != "none")
-
+    #import pdb; pdb.set_trace()
     # Create Mesh converter config
     mesh_converter_cfg = MeshConverterCfg(
         mass_props=mass_props,
@@ -131,6 +131,7 @@ def run_convert(mesh_path, dest_path):
         force_usd_conversion=True,
         usd_dir=os.path.dirname(dest_path),
         usd_file_name=os.path.basename(dest_path),
+        #usd_file_name= 'a'+os.path.basename(dest_path),
         make_instanceable=args_cli.make_instanceable,
         collision_approximation=args_cli.collision_approximation,
     )
@@ -146,6 +147,7 @@ def run_convert(mesh_path, dest_path):
 
     # Create Mesh converter and import the file
     mesh_converter = MeshConverterRescaleMAD3D(mesh_converter_cfg, max_len=8)
+    #mesh_converter = MeshConverterRescaleMAD3D(mesh_converter_cfg, max_len=15)
     # print output
     print("Mesh importer output:")
     print(f"Generated USD file: {mesh_converter.usd_path}")
@@ -176,13 +178,18 @@ def run_convert(mesh_path, dest_path):
     """
 
 def main():
-    meshes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*.fbx'), recursive=True))
+    #meshes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*.fbx'), recursive=True))
+    meshes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*.glb'), recursive=True))
+    #import pdb; pdb.set_trace()
     for i, mesh_path in enumerate(meshes_path):
+        #try:
         relative_path = os.path.relpath(mesh_path, args_cli.input)
         dest_path = os.path.join(args_cli.output, relative_path)
         dest_path = os.path.join(dest_path[:-4], os.path.split(relative_path)[-1][:-3]+'usd')
         print(i)
         run_convert(mesh_path, dest_path)
+        #except Exception as e:
+        #    print(e)
         
 
 if __name__ == "__main__":
