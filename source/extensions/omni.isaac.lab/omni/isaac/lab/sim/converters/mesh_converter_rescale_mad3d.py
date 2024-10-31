@@ -300,7 +300,7 @@ def get_minmax_mesh_coordinates(mesh_prim):
         min_coords[0] = min(min_coords[0], point[0])
         min_coords[1] = min(min_coords[1], point[1])
         min_coords[2] = min(min_coords[2], point[2])
-
+    print(max_coords, min_coords)
     return max_coords, min_coords
 
 
@@ -310,6 +310,8 @@ def get_centroid(stage, mesh_prim_path):
     num_points=0
     centroid = Gf.Vec3f(0.0, 0.0, 0.0)
     min_z = float('inf')
+    min_y = float('inf')
+    min_x = float('inf')
     
     for prim_path in mesh_prim_path:
         mesh_prim = stage.GetPrimAtPath(prim_path)
@@ -322,7 +324,8 @@ def get_centroid(stage, mesh_prim_path):
         # Get the world transformation matrix for the mesh
         xformable = UsdGeom.Xformable(mesh_prim)
         world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-    
+
+        #import pdb; pdb.set_trace()
         # Transform each point to world coordinates
         transformed_points = [world_transform.Transform(point) for point in points]
     
@@ -343,6 +346,8 @@ def get_centroid(stage, mesh_prim_path):
             min_coords[2] = min(min_coords[2], point[2])
             
             min_z = min(min_z, min_coords[2])
+            min_y = min(min_y, min_coords[1])
+            min_x = min(min_x, min_coords[0])
     
             # Add the point to the centroid accumulator
             centroid += point
@@ -352,6 +357,8 @@ def get_centroid(stage, mesh_prim_path):
         centroid /= num_points
     
     centroid[2] = min_z
+    #centroid[1] = min_y
+    #centroid[0] = min_x
     return centroid
 
 def get_scale(stage, mesh_prim_path, desired_len):
@@ -384,32 +391,54 @@ def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
 
     scale_factor = get_scale(stage, mesh_prim_path, max_len)
     #import pdb; pdb.set_trace()
-    centroid = get_centroid(stage, mesh_prim_path)
-    print("centriod: ", centroid)
-    shift_x = -centroid[0]
-    shift_y = -centroid[1]
-    shift_z = -centroid[2]
+    centroid1 = get_centroid(stage, mesh_prim_path)
+    print("centriod: ", centroid1)
+    # shift_x = -centroid[0]
+    # shift_y = -centroid[1]
+    # shift_z = -centroid[2]
+    shift_x = 0
+    shift_y = 0
+    shift_z = 0
     print(scale_factor)
     print(f"Scaling factor: {scale_factor}")
 
 
     # Apply the scaling to the mesh
     for prim_path in mesh_prim_path:
+
         mesh_prim = stage.GetPrimAtPath(prim_path)
-        xform = UsdGeom.Xformable(mesh_prim)
+
+        if not mesh_prim.IsValid():
+            raise ValueError(f"Prim at path {prim_path} is not valid.")
         
-        shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
+        # Traverse up to the root ancestor
+        #while mesh_prim.GetParent().GetPath()!= '/' and mesh_prim.GetPath() != '/':
+        #    mesh_prim = mesh_prim.GetParent()
+        mesh_prim = mesh_prim.GetParent().GetParent()
+        xform = UsdGeom.Xformable(mesh_prim)
+
+        #import pdb; pdb.set_trace()
+        #shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
         scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
         
         xform.ClearXformOpOrder()  # Clear any existing transformations
         # Add translation first, then scale
         
-        shift_op = xform.AddTransformOp()
-        shift_op.Set(shift_transform)
+        #shift_op = xform.AddTransformOp()
+        #shift_op.Set(shift_transform)
         
-        xform.ClearXformOpOrder()
-        scale_op = xform.AddTransformOp()
-        scale_op.Set(scale_transform)
+        #xform.ClearXformOpOrder()
+        scale_opsdfs = xform.AddTransformOp()
+        #combined_transform = shift_transform
+        combined_transform = scale_transform
+        #combined_transform = scale_transform
+        scale_opsdfs.Set(combined_transform)
+
+        centroid2 = get_centroid(stage, mesh_prim_path)
+        print("centriod: ", centroid2)
+        print(centroid2-centroid1)
+
+
     
 
 

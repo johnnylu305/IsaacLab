@@ -460,7 +460,7 @@ def run_simulator(sim, scene_entities, output):
     #height = env_size/2.0 * 2. # Height of the cylinder
     height = env_size/2.0 * 3. # Height of the cylinder
     #theta = [0, np.pi/2., np.pi, np.pi*3/2]
-    theta = np.linspace(0,6*np.pi, 120)#200)
+    theta = np.linspace(0,6*np.pi, 12000)#200)
     #theta = np.linspace(0,6*np.pi, 10)#200)
     num_points = len(theta)
     x = radius * np.cos(theta)
@@ -549,6 +549,7 @@ def run_simulator(sim, scene_entities, output):
             
 def main():
     scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*[!_non_metric].usd'), recursive=True))
+    #scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*[_non_metric].usd'), recursive=True))
     #scenes_path = scenes_path[:1]
 
     world = World(stage_units_in_meters=1.0, backend='torch', device='cpu')
