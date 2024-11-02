@@ -42,6 +42,7 @@ optional arguments:
 import argparse
 
 from omni.isaac.lab.app import AppLauncher
+import shutil
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Utility to convert a mesh file into USD format.")
@@ -180,16 +181,37 @@ def run_convert(mesh_path, dest_path):
 def main():
     #meshes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*.fbx'), recursive=True))
     meshes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*.glb'), recursive=True))
-    #import pdb; pdb.set_trace()
+    import pdb; pdb.set_trace()
+    #with open('mesh_paths.txt', 'a') as file:    
     for i, mesh_path in enumerate(meshes_path):
-        #try:
-        relative_path = os.path.relpath(mesh_path, args_cli.input)
-        dest_path = os.path.join(args_cli.output, relative_path)
-        dest_path = os.path.join(dest_path[:-4], os.path.split(relative_path)[-1][:-3]+'usd')
-        print(i)
-        run_convert(mesh_path, dest_path)
-        #except Exception as e:
-        #    print(e)
+        #with open('mesh_paths.txt', 'w') as file:
+        try:
+            relative_path = os.path.relpath(mesh_path, args_cli.input)
+            dest_path = os.path.join(args_cli.output, relative_path)
+            dest_path = os.path.join(dest_path[:-4], os.path.split(relative_path)[-1][:-3]+'usd')
+            dest_folder = os.path.dirname(dest_path)
+            print(i)
+            run_convert(mesh_path, dest_path)
+            with open('mesh_paths.txt', 'a') as file:
+                #import pdb; pdb.set_trace()
+                file.write(mesh_path + '\n')
+                file.close()
+        
+        except Exception as e:
+            print(e)
+            #import pdb; pdb.set_trace()
+            #for file_name in os.listdir(dest_folder):
+            #    os.remove(os.path.join(dest_folder, file_name))
+            #    print(f"Removed {dest_path} due to processing error.")
+            # Check if the directory is empty and remove it if so
+            #if not os.listdir(dest_folder):
+            #    os.rmdir(dest_folder)
+            if os.path.exists(dest_folder):
+                shutil.rmtree(dest_folder, ignore_errors=True)
+                print(f"Removed empty directory {dest_folder}")
+                #print(f"Removed {dest_path} due to processing error.")
+            #import pdb; pdb.set_trace()
+        
         
 
 if __name__ == "__main__":

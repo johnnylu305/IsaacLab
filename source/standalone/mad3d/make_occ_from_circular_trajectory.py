@@ -460,8 +460,8 @@ def run_simulator(sim, scene_entities, output):
     #height = env_size/2.0 * 2. # Height of the cylinder
     height = env_size/2.0 * 3. # Height of the cylinder
     #theta = [0, np.pi/2., np.pi, np.pi*3/2]
-    theta = np.linspace(0,6*np.pi, 12000)#200)
-    #theta = np.linspace(0,6*np.pi, 10)#200)
+    #theta = np.linspace(0,6*np.pi, 12000)#200)
+    theta = np.linspace(0,6*np.pi, 1)#200)
     num_points = len(theta)
     x = radius * np.cos(theta)
     y = radius * np.sin(theta)
@@ -568,6 +568,8 @@ def main():
         world.reset()
         #generate_occupancy_maps(world, output)
         run_simulator(world, scene_entities, output)
+        print(scene_path)
+        #import pdb; pdb.set_trace()
         world.clear()
         #break
         #counter = 0

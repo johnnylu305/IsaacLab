@@ -19,7 +19,11 @@ from omni.isaac.lab.sim.utils import export_prim_to_file
 from omni.isaac.core.utils.prims import get_prim_at_path
 import omni.isaac.core.utils.prims as prims_utils
 from pxr import Sdf, UsdLux, UsdGeom, Gf, Usd
+from pxr import Gf, Vt
 
+import pxr
+import numpy as np
+import open3d as o3d
 
 
 
@@ -108,7 +112,8 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
 
         # Rescale
         rescale_scene(stage=stage, scene_prim_root=f"/{mesh_file_basename}/geometry", max_len=self.max_len)
-
+        
+        '''
         # Move all meshes to underneath new Xform
         stack = [geom_prim]
         # While there are nodes in the stack
@@ -165,6 +170,7 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
             schemas.define_rigid_body_properties(prim_path=xform_prim.GetPath(), cfg=cfg.rigid_props, stage=stage)
 
         # Save changes to USD stage
+        '''
         stage.Save()
         if stage_id is not None:
             UsdUtils.StageCache.Get().Erase(stage_id)
@@ -275,7 +281,7 @@ def get_all_mesh_prim_path(stage, root):
             stack.append(child)
     return mesh_prim_path
 
-
+'''
 def get_minmax_mesh_coordinates(mesh_prim):
     # Access the mesh's point positions in local space
     mesh = UsdGeom.Mesh(mesh_prim)
@@ -284,10 +290,11 @@ def get_minmax_mesh_coordinates(mesh_prim):
 
     # Get the world transformation matrix for the mesh
     xformable = UsdGeom.Xformable(mesh_prim)
-    world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    #world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
 
     # Transform each point to world coordinates
-    transformed_points = [world_transform.Transform(point) for point in points]
+    #transformed_points = [world_transform.Transform(point) for point in points]
+    transformed_points = points
 
     # Calculate the maximum coordinates
     max_coords = Gf.Vec3f(float('-inf'), float('-inf'), float('-inf'))
@@ -302,7 +309,20 @@ def get_minmax_mesh_coordinates(mesh_prim):
         min_coords[2] = min(min_coords[2], point[2])
     print(max_coords, min_coords)
     return max_coords, min_coords
+'''
 
+
+def get_minmax_mesh_coordinates(mesh_prim):
+    # Create a bounding box cache with the specific time code
+    #time_code = Usd.TimeCode(1)  # Adjust this if you need a different frame
+    bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render])
+
+    # Compute the world space bounding box for the specified mesh primitive
+    bbox = bbox_cache.ComputeWorldBound(mesh_prim)
+    min_coords = bbox.GetBox().GetMin()
+    max_coords = bbox.GetBox().GetMax()
+
+    return max_coords, min_coords
 
 def get_centroid(stage, mesh_prim_path):
     # Access the mesh's point positions in local space
@@ -312,7 +332,17 @@ def get_centroid(stage, mesh_prim_path):
     min_z = float('inf')
     min_y = float('inf')
     min_x = float('inf')
+    max_x, max_y, max_z = -1e10, -1e10, -1e10
     
+    
+    bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render])
+    mesh_prim = stage.GetPrimAtPath(mesh_prim_path)
+    # Compute the world space bounding box for the specified mesh primitive
+    bbox = bbox_cache.ComputeWorldBound(mesh_prim)
+    min_coords = bbox.GetBox().GetMin()
+    max_coords = bbox.GetBox().GetMax()
+    
+    '''
     for prim_path in mesh_prim_path:
         mesh_prim = stage.GetPrimAtPath(prim_path)
         max_coords, min_coords = get_minmax_mesh_coordinates(mesh_prim)
@@ -348,24 +378,31 @@ def get_centroid(stage, mesh_prim_path):
             min_z = min(min_z, min_coords[2])
             min_y = min(min_y, min_coords[1])
             min_x = min(min_x, min_coords[0])
+            max_x = max(max_x, max_coords[0])
+            max_y = max(max_y, max_coords[1])
+            max_z = max(max_z, max_coords[2])
     
             # Add the point to the centroid accumulator
             centroid += point
-
+    
     # Calculate the centroid by dividing the sum of points by the number of points
     if num_points > 0:
         centroid /= num_points
-    
-    centroid[2] = min_z
+    '''
+    #centroid[2] = (min_z+max_z)/2
     #centroid[1] = min_y
-    #centroid[0] = min_x
+    #centroid[0] = (min_x+max_x)/2
+    
+    centroid[2] = (min_coords[2]+ max_coords[0])/2
+    centroid[1] = min_coords[1]
+    centroid[0] = (min_coords[0] + max_coords[0])/2
     return centroid
 
 def get_scale(stage, mesh_prim_path, desired_len):
     
     max_x, max_y, max_z = -1e10, -1e10, -1e10
     min_x, min_y, min_z = 1e10, 1e10, 1e10
-
+    #import pdb; pdb.set_trace()
     for prim_path in mesh_prim_path:
         mesh_prim = stage.GetPrimAtPath(prim_path)
         max_coords, min_coords = get_minmax_mesh_coordinates(mesh_prim)
@@ -378,27 +415,88 @@ def get_scale(stage, mesh_prim_path, desired_len):
         min_x = min(min_x, min_coords[0])
         min_y = min(min_y, min_coords[1])
         min_z = min(min_z, min_coords[2])
+        
     extent = (max_x-min_x, max_y-min_y, max_z-min_z)
     max_side = max(extent)
     print(f"Max Side: {max_side} meters")
+    
     return desired_len/max_side
 
+def convert_to_open3d_mesh(mesh_data):
+    vertices, face_vertex_counts, face_vertex_indices = mesh_data
+    vertices = np.array(vertices)
+    triangles = []
 
+    # Convert face indices
+    index = 0
+    for fvc in face_vertex_counts:
+        if fvc == 3:  # Assuming all faces are triangles
+            triangles.append(face_vertex_indices[index:index+3])
+        index += fvc
+
+    triangles = np.array(triangles)
+
+    # Create Open3D mesh
+    o3d_mesh = o3d.geometry.TriangleMesh()
+    o3d_mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    o3d_mesh.triangles = o3d.utility.Vector3iVector(triangles)
+    o3d_mesh.compute_vertex_normals()  # Optional: for better visualization
+    return o3d_mesh
+
+def rescale_mesh(mesh, scale_factor):
+    vertices = np.asarray(mesh.vertices)
+    centroid = mesh.get_center()
+    
+    centroid[1] = vertices[:,1].min()
+    vertices -= centroid
+    vertices *= scale_factor  # Scale the vertices
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.compute_vertex_normals()  # Recompute normals for proper visualization
+    return mesh
+    
+def extract_mesh_data(o3d_mesh):
+    vertices = np.asarray(o3d_mesh.vertices)
+    faces = np.asarray(o3d_mesh.triangles)
+    return vertices, faces
+    
+def create_usd_from_mesh(vertices, faces, usd_file_path):
+    # Create a new stage
+    stage = Usd.Stage.CreateNew(usd_file_path)
+
+    # Create a mesh primitive at the specified path
+    mesh = UsdGeom.Mesh.Define(stage, '/World/myMesh')
+
+    # Set vertices positions
+    mesh.GetPointsAttr().Set(Vt.Vec3fArray(vertices.tolist()))
+
+    # Set face vertex indices
+    face_vertex_counts = [len(face) for face in faces]
+    mesh.GetFaceVertexCountsAttr().Set(Vt.IntArray(face_vertex_counts))
+
+    # Flatten the list of faces to a list of indices
+    face_vertex_indices = faces.flatten()
+    mesh.GetFaceVertexIndicesAttr().Set(Vt.IntArray(face_vertex_indices.tolist()))
+
+    # Save the stage
+    stage.Save()
+
+    return stage
+    
 def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
 
     mesh_prim_path = get_all_mesh_prim_path(stage, scene_prim_root)
     print(mesh_prim_path)
-
+    
     scale_factor = get_scale(stage, mesh_prim_path, max_len)
     #import pdb; pdb.set_trace()
-    centroid1 = get_centroid(stage, mesh_prim_path)
-    print("centriod: ", centroid1)
+    #centroid1 = get_centroid(stage, mesh_prim_path)
+    #print("centriod: ", centroid1)
     # shift_x = -centroid[0]
     # shift_y = -centroid[1]
     # shift_z = -centroid[2]
-    shift_x = 0
-    shift_y = 0
-    shift_z = 0
+    #shift_x = -centroid1[1]
+    #shift_y = -centroid1[2]
+    #shift_z = -centroid1[0]
     print(scale_factor)
     print(f"Scaling factor: {scale_factor}")
 
@@ -407,7 +505,27 @@ def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
     for prim_path in mesh_prim_path:
 
         mesh_prim = stage.GetPrimAtPath(prim_path)
+            
+        mesh = UsdGeom.Mesh(mesh_prim)
+        '''
+        points = mesh.GetPointsAttr().Get()
+        face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()
+        face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()
 
+        o3d_mesh = convert_to_open3d_mesh((points, face_vertex_counts, face_vertex_indices))
+        o3d_mesh = rescale_mesh(o3d_mesh, scale_factor)
+        
+        # Extract mesh data
+        vertices, faces = extract_mesh_data(o3d_mesh)
+        
+        # Create USD from the mesh data
+        usd_file_path = "output_mesh.usd"
+        create_usd_from_mesh(vertices, faces, usd_file_path)
+        
+        print(f"USD file saved to {usd_file_path}")
+        import pdb; pdb.set_trace()
+        
+        '''
         if not mesh_prim.IsValid():
             raise ValueError(f"Prim at path {prim_path} is not valid.")
         
@@ -433,11 +551,32 @@ def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
         combined_transform = scale_transform
         #combined_transform = scale_transform
         scale_opsdfs.Set(combined_transform)
-
-        centroid2 = get_centroid(stage, mesh_prim_path)
+        #import pdb; pdb.set_trace()
+        
+        centroid2 = get_centroid(stage, prim_path)
+        #shift_x = -centroid2[1]
+        #shift_y = -centroid2[2]
+        #shift_z = -centroid2[0]
+        
+        shift_x = -centroid2[0]
+        shift_y = -centroid2[1]
+        shift_z = -centroid2[2]
+        
+        #shift_x = -centroid2[0]
+        #shift_y = -centroid2[2]
+        #shift_z = centroid2[1]
         print("centriod: ", centroid2)
-        print(centroid2-centroid1)
+        
+        #print(centroid2)
+        
+        shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
+        xform.ClearXformOpOrder()
+        shift_op = xform.AddTransformOp()
+        combined_transform = shift_transform*scale_transform
+        #combined_transform = scale_transform
+        shift_op.Set(combined_transform)
 
+        
 
     
 
