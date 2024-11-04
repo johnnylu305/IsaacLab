@@ -296,7 +296,7 @@ def rescale_scene(scene_prim_root="/World/Scene"):
 
     # Initialize cumulative rotation as an identity quaternion
     cumulative_rotation = Gf.Quatf(1, 0, 0, 0)  # Identity quaternion
-    original_up_vector = Gf.Quatd(0,0, 0, 1)
+    original_up_vector = Gf.Quatd(0, 0, 0, 1)
     # Traverse from root prim to the last child and accumulate rotations
 
     current_prim = get_prim_at_path(prim_path=mesh_prim_path[0])
@@ -356,6 +356,10 @@ def rescale_scene(scene_prim_root="/World/Scene"):
     y_mins=[]
     x_mins=[]
     z_mins=[]
+
+    y_maxs=[]
+    x_maxs=[]
+    z_maxs=[]
     voxel_grids = []
     
     for mesh_data in meshes:
@@ -365,6 +369,11 @@ def rescale_scene(scene_prim_root="/World/Scene"):
         y_min = o3d_mesh.get_min_bound()[1]
         x_min = o3d_mesh.get_min_bound()[0]
         z_min = o3d_mesh.get_min_bound()[2]
+
+        y_max = o3d_mesh.get_max_bound()[1]
+        x_max = o3d_mesh.get_max_bound()[0]
+        z_max = o3d_mesh.get_max_bound()[2]
+
         center = o3d_mesh.get_center()
         o3d_mesh.translate(-center)  # Center the mesh by translating it to the origin based on the adjusted center
         print("Adjusted Center:", center)
@@ -380,6 +389,10 @@ def rescale_scene(scene_prim_root="/World/Scene"):
         y_mins.append(y_min)
         x_mins.append(x_min)
         z_mins.append(z_min)
+
+        y_maxs.append(y_max)
+        x_maxs.append(x_max)
+        z_maxs.append(z_max)
     # mesh_prim = get_prim_at_path('/World/Scene')
     # #mesh_prim = get_prim_at_path(mesh_prim_path[0])
     # #max_coords, min_coords = get_minmax_mesh_coordinates(mesh_prim)
@@ -417,16 +430,20 @@ def rescale_scene(scene_prim_root="/World/Scene"):
     global_y_min = min(y_mins)
     global_x_min = min(x_mins)
     global_z_min = min(z_mins)
+
+    global_y_max = max(y_maxs)
+    global_x_max = min(x_maxs)
+    global_z_max = min(z_maxs)
     if mapped_axis == '-y':
         mean_center[1] = global_y_min
     if mapped_axis == '-x':
         mean_center[0] = global_x_min
     if mapped_axis == '-z':
-        mean_center[2] = -global_z_min
+        mean_center[2] = global_z_max
     if mapped_axis == 'y':
-        mean_center[1] = -global_y_min
+        mean_center[1] = global_y_max
     if mapped_axis == 'x':
-        mean_center[0] = -global_x_min
+        mean_center[0] = global_x_max
     if mapped_axis == 'z':
         mean_center[2] = global_z_min
     centroid = mean_center
@@ -435,6 +452,9 @@ def rescale_scene(scene_prim_root="/World/Scene"):
     # for prim_path in mesh_prim_path:
     #     mesh_prim = get_prim_at_path(prim_path=prim_path)
     #     clear_transforms_for_parents(mesh_prim)
+    if len(mesh_prim_path)>10:
+        import pdb; pdb.set_trace()
+
     root_prim = get_prim_at_path("/World/Scene")
 
     # Traverse all descendants of the root prim
@@ -449,8 +469,11 @@ def rescale_scene(scene_prim_root="/World/Scene"):
                 op_type = op.GetOpType()
                 
                 # Clear only translation and scale types
-                if op_type in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale):
+                #if op_type in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale):
+                #    op.GetAttr().Clear()  # Clear the specific transformation operation
+                if op_type == UsdGeom.XformOp.TypeScale:
                     op.GetAttr().Clear()  # Clear the specific transformation operation
+
 
             # Update xformOpOrder to remove cleared operations, keeping only rotations
             new_xform_op_order = [op for op in xform.GetOrderedXformOps() if op.GetOpType() not in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale)]
@@ -681,7 +704,7 @@ def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, 
             if occupancy_grid[x, y] == target:  
                 # Calculate position based on cell coordinates
                 #cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0]+env_size/2, (y*cell_size)+env_origin[1]+env_size/2, base_height+h_off)
-                cube_pos = Gf.Vec3f((x*cell_size), (y*cell_size), base_height+h_off)
+                cube_pos = Gf.Vec3f((x*cell_size)-cell_size*env_size/2+cell_size, (y*cell_size)-cell_size*env_size/2+cell_size, base_height+h_off)
                 # Define the cube's USD path
                 cube_prim_path = f"/World/OccupancyBlocks/Block_{env_id}_{x}_{y}_{z}_{target}"
 
@@ -829,7 +852,7 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
 
 
     for i in range(len(voxel_centers)):
-        occ_grid[voxel_centers[i][0],voxel_centers[i][1],voxel_centers[i][2]]=1
+        occ_grid[voxel_centers[i][0]+x_off,voxel_centers[i][1]+y_off,voxel_centers[i][2]+z_off]=1
 
     #o3d.visualization.draw([voxel_grid])
 
@@ -849,12 +872,11 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
         # Rotate so X is up
         occ_grid = np.transpose(occ_grid, [2, 1, 0])  # Z becomes X, Y remains, X becomes Z
         occ_grid = np.flip(occ_grid, axis=1)           # Flip along the new Y-axis
-
     elif up_axis == '-x':
         # Rotate so -X is up
         occ_grid = np.transpose(occ_grid, [2, 1, 0])   # Z becomes X, Y remains, X becomes Z
         occ_grid = np.flip(occ_grid, axis=2)           # Flip along the new Z-axis
-        
+
     elif up_axis == 'y':
         occ_grid = np.transpose(occ_grid, [0, 2, 1])   # X remains, Z becomes Y, Y becomes Z
         
@@ -863,10 +885,11 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
         occ_grid = np.transpose(occ_grid, [0, 2, 1])   # X remains, Z becomes Y, Y becomes Z
         occ_grid = np.flip(occ_grid, axis=1)           # Flip along the new Y-axis
     elif up_axis == 'z':
+        pass
         # Rotate so Z is up
         #occ_grid = np.transpose(occ_grid, [1, 0, 2])   # Swap X and Y axes
-        occ_grid = np.flip(occ_grid, axis=0)           # Flip along the new X-axis
-        
+        #occ_grid = np.flip(occ_grid, axis=0)           # Flip along the new X-axis
+        #import pdb; pdb.set_trace()
     elif up_axis == '-z':
         occ_grid = np.flip(occ_grid, axis=0)           # Flip along the new X-axis
         occ_grid = np.flip(occ_grid, axis=2)           # Flip along the new X-axis
@@ -880,6 +903,15 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
         #     pc_markers.visualize(translations=np.array(all_points))        
         sim.step()
 
+    shifted_occ_grid = np.zeros_like(occ_grid)
+
+    # Find the first index with a non-zero sum along the third dimension
+    for i in range(occ_grid.shape[2]):
+        if occ_grid[:,:,i].sum() > 0:
+            # Shift the original array to the left and keep the original shape
+            shifted_occ_grid[:,:,0:occ_grid.shape[2]-i] = occ_grid[:,:,i:]
+            break  # Exit after the first non-zero slice is found
+    occ_grid = shifted_occ_grid
     for i in range(occ_grid.shape[2]):
         # vis occ
         image_filename = f"occupancy_map_slice_{i}.png"
