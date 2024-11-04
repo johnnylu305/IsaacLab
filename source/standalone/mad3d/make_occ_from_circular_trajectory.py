@@ -155,7 +155,7 @@ def get_minmax_mesh_coordinates(mesh_prim):
 
     # Transform each point to world coordinates
     transformed_points = [world_transform.Transform(point) for point in points]
-
+    #transformed_points = points
     # Calculate the maximum coordinates
     max_coords = Gf.Vec3f(float('-inf'), float('-inf'), float('-inf'))
     min_coords = Gf.Vec3f(float('inf'), float('inf'), float('inf'))
@@ -170,6 +170,17 @@ def get_minmax_mesh_coordinates(mesh_prim):
 
     return max_coords, min_coords
 
+# def get_minmax_mesh_coordinates(mesh_prim):
+#     # Create a bounding box cache with the specific time code
+#     #time_code = Usd.TimeCode(1)  # Adjust this if you need a different frame
+#     bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render])
+
+#     # Compute the world space bounding box for the specified mesh primitive
+#     bbox = bbox_cache.ComputeWorldBound(mesh_prim)
+#     min_coords = bbox.GetBox().GetMin()
+#     max_coords = bbox.GetBox().GetMax()
+
+#     return max_coords, min_coords
 
 def get_scale(mesh_prim_path, desired_len):
     
@@ -191,26 +202,187 @@ def get_scale(mesh_prim_path, desired_len):
     extent = (max_x-min_x, max_y-min_y, max_z-min_z)
     max_side = max(extent)
     print(f"Max Side: {max_side} meters")
-    return desired_len/max_side
+    #import pdb; pdb.set_trace()
+    return desired_len/max_side, ((min_x+max_x)/2, (min_y+max_y)/2, min_z)
 
+def clear_translation_and_scale(prim):
+    """
+    Clears all translation and scale transformations on the given prim,
+    but keeps the rotation transformations intact.
+    """
+    # Wrap the prim as an Xformable
+    xform = UsdGeom.Xformable(prim)
+
+    # Get all transformation operations on the prim
+    xform_ops = xform.GetOrderedXformOps()
+
+    # Iterate through each operation and clear translation and scale transformations
+    for op in xform_ops:
+        op_type = op.GetOpType()
+        
+        # Clear only translation and scale types
+        if op_type in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale):
+            op.GetAttr().Clear()  # Clear the specific transformation operation
+
+    # Update xformOpOrder to remove cleared operations, keeping only rotations
+    new_xform_op_order = [op for op in xform.GetOrderedXformOps() if op.GetOpType() not in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale)]
+    xform.SetXformOpOrder(new_xform_op_order)
+
+    print(f"Cleared translation and scale for prim: {prim.GetPath()}")
+
+def clear_transforms_for_parents(prim):
+    """
+    Clears translation and scale transformations for the given prim and all its parent nodes.
+    """
+    # Clear transformations for the current prim
+    clear_translation_and_scale(prim)
+
+    # Traverse up the hierarchy to clear transformations for all parent nodes
+    parent = prim
+    
+    while parent.GetParent():
+        clear_translation_and_scale(parent)
+        parent = parent.GetParent()
+    
+
+def get_centroid(mesh_prim_path):
+    # Access the mesh's point positions in local space
+    
+    num_points=0
+    centroid = Gf.Vec3f(0.0, 0.0, 0.0)
+    min_z = float('inf')
+    min_y = float('inf')
+    min_x = float('inf')
+    max_x, max_y, max_z = -1e10, -1e10, -1e10
+    
+    '''
+    bbox_cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render])
+    mesh_prim = get_prim_at_path(mesh_prim_path)
+    # Compute the world space bounding box for the specified mesh primitive
+    bbox = bbox_cache.ComputeWorldBound(mesh_prim)
+    min_coords = bbox.GetBox().GetMin()
+    max_coords = bbox.GetBox().GetMax()
+    
+    '''
+    for prim_path in mesh_prim_path:
+        mesh_prim = get_prim_at_path(prim_path)
+        max_coords, min_coords = get_minmax_mesh_coordinates(mesh_prim)
+        
+        mesh = UsdGeom.Mesh(mesh_prim)
+        points_attr = mesh.GetPointsAttr()
+        points = points_attr.Get()
+    
+        # Get the world transformation matrix for the mesh
+        xformable = UsdGeom.Xformable(mesh_prim)
+        world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+
+        #import pdb; pdb.set_trace()
+        # Transform each point to world coordinates
+        transformed_points = [world_transform.Transform(point) for point in points]
+    
+        # Initialize min/max coordinates and centroid
+        max_coords = Gf.Vec3f(float('-inf'), float('-inf'), float('-inf'))
+        min_coords = Gf.Vec3f(float('inf'), float('inf'), float('inf'))
+        
+    
+        # Calculate min/max coordinates and accumulate for centroid
+        num_points += len(transformed_points)
+        for point in transformed_points:
+            max_coords[0] = max(max_coords[0], point[0])
+            max_coords[1] = max(max_coords[1], point[1])
+            max_coords[2] = max(max_coords[2], point[2])
+    
+            min_coords[0] = min(min_coords[0], point[0])
+            min_coords[1] = min(min_coords[1], point[1])
+            min_coords[2] = min(min_coords[2], point[2])
+            
+            min_z = min(min_z, min_coords[2])
+            min_y = min(min_y,  min_coords[1])
+        centroid /= num_points
+    
+    #centroid[2] = (min_z+max_z)/2
+    #centroid[1] = min_y
+    #centroid[0] = (min_x+max_x)/2
+    
+    centroid[2] = (min_coords[2]+ max_coords[2])/2
+    centroid[1] = min_coords[1] 
+    centroid[0] = (min_coords[0] + max_coords[0])/2
+    return centroid
 
 def rescale_scene(scene_prim_root="/World/Scene"):
-
     mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
-    print(mesh_prim_path)
-
-    scale_factor = get_scale(mesh_prim_path, args_cli.max_len)
+    for prim_path in mesh_prim_path:
+        mesh_prim = get_prim_at_path(prim_path=prim_path)
+        clear_transforms_for_parents(mesh_prim)
+    scale_factor, centroid = get_scale(mesh_prim_path, args_cli.max_len)
     print(scale_factor)
     print(f"Scaling factor: {scale_factor}")
-
-
+    print(centroid)
+    import pdb; pdb.set_trace()
     # Apply the scaling to the mesh
     for prim_path in mesh_prim_path:
         mesh_prim = get_prim_at_path(prim_path=prim_path)
+        
+        #clear_transforms_for_parents(mesh_prim)
         xform = UsdGeom.Xformable(mesh_prim)
+        xform.ClearXformOpOrder()
+        # Get all transformation operations on the prim
+        #xform_ops = xform.GetOrderedXformOps()
+
+        shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(centroid[1], -centroid[2], centroid[0]))
         scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
-        xform.ClearXformOpOrder()  # Clear any existing transformations
-        xform.AddTransformOp().Set(scale_transform)
+        #xform.ClearXformOpOrder()  # Clear any existing transformations
+        #xform.AddTransformOp().Set(scale_transform)
+        
+        combined_transform = shift_transform*scale_transform
+        #combined_transform = scale_transform
+        xform.AddTransformOp().Set(combined_transform)
+
+
+        # xform = UsdGeom.Xformable(mesh_prim)
+
+        # #import pdb; pdb.set_trace()
+        # #shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
+        # scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
+        
+        # xform.ClearXformOpOrder()  # Clear any existing transformations
+        # # Add translation first, then scale
+        
+        # #shift_op = xform.AddTransformOp()
+        # #shift_op.Set(shift_transform)
+        
+        # #xform.ClearXformOpOrder()
+        # scale_opsdfs = xform.AddTransformOp()
+        # #combined_transform = shift_transform
+        # combined_transform = scale_transform
+        # #combined_transform = scale_transform
+        # scale_opsdfs.Set(combined_transform)
+        # #import pdb; pdb.set_trace()
+        
+        # centroid2 = get_centroid(prim_path)
+        # #shift_x = -centroid2[1]
+        # #shift_y = -centroid2[2]
+        # #shift_z = -centroid2[0]
+        
+        # shift_x = -centroid2[0]
+        # shift_y = -centroid2[1]
+        # shift_z = -centroid2[2]
+        
+        # #shift_x = -centroid2[0]
+        # #shift_y = -centroid2[2]
+        # #shift_z = centroid2[1]
+        # print("centriod: ", centroid2)
+        
+        # #print(centroid2)
+        
+        # shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
+        # xform.ClearXformOpOrder()
+        # #shift_op = xform.AddTransformOp()
+        # combined_transform = shift_transform*scale_transform
+        # #combined_transform = scale_transform
+        # #shift_op.Set(combined_transform)
+        # xform.AddTransformOp().Set(combined_transform)
+
 
 
 def remove_prim(prim, level=0):
@@ -460,8 +632,8 @@ def run_simulator(sim, scene_entities, output):
     #height = env_size/2.0 * 2. # Height of the cylinder
     height = env_size/2.0 * 3. # Height of the cylinder
     #theta = [0, np.pi/2., np.pi, np.pi*3/2]
-    #theta = np.linspace(0,6*np.pi, 12000)#200)
-    theta = np.linspace(0,6*np.pi, 1)#200)
+    theta = np.linspace(0,6*np.pi, 12000)#200)
+    #theta = np.linspace(0,6*np.pi, 1)#200)
     num_points = len(theta)
     x = radius * np.cos(theta)
     y = radius * np.sin(theta)
@@ -569,6 +741,7 @@ def main():
         #generate_occupancy_maps(world, output)
         run_simulator(world, scene_entities, output)
         print(scene_path)
+        #import pdb; pdb.set_trace()
         #import pdb; pdb.set_trace()
         world.clear()
         #break

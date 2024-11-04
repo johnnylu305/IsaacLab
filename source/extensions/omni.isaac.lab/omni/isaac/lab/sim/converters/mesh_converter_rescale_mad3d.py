@@ -110,10 +110,23 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
         xform_prim = stage.GetDefaultPrim()
         geom_prim = stage.GetPrimAtPath(f"/{mesh_file_basename}/geometry")
 
+        # Make sure the prim is an Xformable type (which can have transformations like scale)
+        xformable = UsdGeom.Xformable(geom_prim)
+
+        # Check if the prim has a scale transformation
+        scale_attr = xformable.GetXformOpOrderAttr().Get()
+
+        # # Clear the scale transform if it exists
+        # for op in xformable.GetOrderedXformOps():
+        #     if op.GetOpType() == UsdGeom.XformOp.TypeScale:
+        #         # Remove the scale operation
+        #         op.GetAttr().Clear()
+        #         print(f"Scale cleared for prim: {geom_prim.GetPath()}")
         # Rescale
         rescale_scene(stage=stage, scene_prim_root=f"/{mesh_file_basename}/geometry", max_len=self.max_len)
+        #rescale_scene(scene_prim_root=f"/{mesh_file_basename}/geometry")
         
-        '''
+        
         # Move all meshes to underneath new Xform
         stack = [geom_prim]
         # While there are nodes in the stack
@@ -168,9 +181,9 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
         # apply rigid body properties
         if cfg.rigid_props is not None:
             schemas.define_rigid_body_properties(prim_path=xform_prim.GetPath(), cfg=cfg.rigid_props, stage=stage)
-
+        
         # Save changes to USD stage
-        '''
+        
         stage.Save()
         if stage_id is not None:
             UsdUtils.StageCache.Get().Erase(stage_id)
@@ -280,6 +293,7 @@ def get_all_mesh_prim_path(stage, root):
             # Add the child to the stack for further traversal
             stack.append(child)
     return mesh_prim_path
+
 
 '''
 def get_minmax_mesh_coordinates(mesh_prim):
@@ -481,14 +495,35 @@ def create_usd_from_mesh(vertices, faces, usd_file_path):
     stage.Save()
 
     return stage
-    
+
+
+
+
 def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
+    # prim_path = scene_prim_root
+    # mesh_prim = stage.GetPrimAtPath(prim_path)
+
+    # while mesh_prim.GetParent().GetPath()!= '/' and mesh_prim.GetPath() != '/':
+    #     #import pdb; pdb.set_trace()
+    #     # Make sure the prim is an Xformable type (which can have transformations like scale)
+    #     xformable = UsdGeom.Xformable(mesh_prim)
+
+    #     # Check if the prim has a scale transformation
+    #     scale_attr = xformable.GetXformOpOrderAttr().Get()
+
+    #     # Clear the scale transform if it exists
+    #     for op in xformable.GetOrderedXformOps():
+    #         #if op.GetOpType() == UsdGeom.XformOp.TypeScale:
+    #         # Remove the scale operation
+    #         op.GetAttr().Clear()
+    #         print(f"Scale cleared for prim: {mesh_prim.GetPath()}")
+    #     mesh_prim = mesh_prim.GetParent()
 
     mesh_prim_path = get_all_mesh_prim_path(stage, scene_prim_root)
     print(mesh_prim_path)
     
     scale_factor = get_scale(stage, mesh_prim_path, max_len)
-    #import pdb; pdb.set_trace()
+
     #centroid1 = get_centroid(stage, mesh_prim_path)
     #print("centriod: ", centroid1)
     # shift_x = -centroid[0]
@@ -502,81 +537,84 @@ def rescale_scene(stage, scene_prim_root="/World/Scene", max_len=1):
 
 
     # Apply the scaling to the mesh
-    for prim_path in mesh_prim_path:
+    #for prim_path in mesh_prim_path:
+    prim_path = scene_prim_root
+    mesh_prim = stage.GetPrimAtPath(prim_path)
+        
+    mesh = UsdGeom.Mesh(mesh_prim)
+    '''
+    points = mesh.GetPointsAttr().Get()
+    face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()
+    face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()
 
-        mesh_prim = stage.GetPrimAtPath(prim_path)
-            
-        mesh = UsdGeom.Mesh(mesh_prim)
-        '''
-        points = mesh.GetPointsAttr().Get()
-        face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()
-        face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()
+    o3d_mesh = convert_to_open3d_mesh((points, face_vertex_counts, face_vertex_indices))
+    o3d_mesh = rescale_mesh(o3d_mesh, scale_factor)
+    
+    # Extract mesh data
+    vertices, faces = extract_mesh_data(o3d_mesh)
+    
+    # Create USD from the mesh data
+    usd_file_path = "output_mesh.usd"
+    create_usd_from_mesh(vertices, faces, usd_file_path)
+    
+    print(f"USD file saved to {usd_file_path}")
+    import pdb; pdb.set_trace()
+    
+    '''
+    if not mesh_prim.IsValid():
+        raise ValueError(f"Prim at path {prim_path} is not valid.")
+    
+    # Traverse up to the root ancestor
+    #while mesh_prim.GetParent().GetPath()!= '/' and mesh_prim.GetPath() != '/':
+    #    mesh_prim = mesh_prim.GetParent()
+    
 
-        o3d_mesh = convert_to_open3d_mesh((points, face_vertex_counts, face_vertex_indices))
-        o3d_mesh = rescale_mesh(o3d_mesh, scale_factor)
-        
-        # Extract mesh data
-        vertices, faces = extract_mesh_data(o3d_mesh)
-        
-        # Create USD from the mesh data
-        usd_file_path = "output_mesh.usd"
-        create_usd_from_mesh(vertices, faces, usd_file_path)
-        
-        print(f"USD file saved to {usd_file_path}")
-        import pdb; pdb.set_trace()
-        
-        '''
-        if not mesh_prim.IsValid():
-            raise ValueError(f"Prim at path {prim_path} is not valid.")
-        
-        # Traverse up to the root ancestor
-        #while mesh_prim.GetParent().GetPath()!= '/' and mesh_prim.GetPath() != '/':
-        #    mesh_prim = mesh_prim.GetParent()
-        mesh_prim = mesh_prim.GetParent().GetParent()
-        xform = UsdGeom.Xformable(mesh_prim)
+    #mesh_prim = mesh_prim.GetParent().GetParent()
+    xform = UsdGeom.Xformable(mesh_prim)
 
-        #import pdb; pdb.set_trace()
-        #shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
-        scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
-        
-        xform.ClearXformOpOrder()  # Clear any existing transformations
-        # Add translation first, then scale
-        
-        #shift_op = xform.AddTransformOp()
-        #shift_op.Set(shift_transform)
-        
-        #xform.ClearXformOpOrder()
-        scale_opsdfs = xform.AddTransformOp()
-        #combined_transform = shift_transform
-        combined_transform = scale_transform
-        #combined_transform = scale_transform
-        scale_opsdfs.Set(combined_transform)
-        #import pdb; pdb.set_trace()
-        
-        centroid2 = get_centroid(stage, prim_path)
-        #shift_x = -centroid2[1]
-        #shift_y = -centroid2[2]
-        #shift_z = -centroid2[0]
-        
-        shift_x = -centroid2[0]
-        shift_y = -centroid2[1]
-        shift_z = -centroid2[2]
-        
-        #shift_x = -centroid2[0]
-        #shift_y = -centroid2[2]
-        #shift_z = centroid2[1]
-        print("centriod: ", centroid2)
-        
-        #print(centroid2)
-        
-        shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
-        xform.ClearXformOpOrder()
-        shift_op = xform.AddTransformOp()
-        combined_transform = shift_transform*scale_transform
-        #combined_transform = scale_transform
-        shift_op.Set(combined_transform)
+    #import pdb; pdb.set_trace()
+    #shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
+    scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
+    
+    xform.ClearXformOpOrder()  # Clear any existing transformations
+    # Add translation first, then scale
+    
+    #shift_op = xform.AddTransformOp()
+    #shift_op.Set(shift_transform)
+    
+    #xform.ClearXformOpOrder()
+    scale_opsdfs = xform.AddTransformOp()
+    #combined_transform = shift_transform
+    combined_transform = scale_transform
+    #combined_transform = scale_transform
+    #scale_opsdfs.Set(combined_transform)
+    #import pdb; pdb.set_trace()
+    
+    # centroid2 = get_centroid(stage, prim_path)
+    # #shift_x = -centroid2[1]
+    # #shift_y = -centroid2[2]
+    # #shift_z = -centroid2[0]
+    
+    # shift_x = -centroid2[0]
+    # shift_y = -centroid2[1]
+    # shift_z = -centroid2[2]
+    
+    # #shift_x = -centroid2[0]
+    # #shift_y = -centroid2[2]
+    # #shift_z = centroid2[1]
+    # print("centriod: ", centroid2)
+    
+    # #print(centroid2)
+    
+    # shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(shift_x, shift_y, shift_z))
+    # xform.ClearXformOpOrder()
+    # shift_op = xform.AddTransformOp()
+    # combined_transform = scale_transform*shift_transform
+    # #combined_transform = scale_transform
+    # shift_op.Set(combined_transform)
 
-        
+
+    
 
     
 

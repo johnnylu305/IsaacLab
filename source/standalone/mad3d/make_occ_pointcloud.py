@@ -214,24 +214,286 @@ def get_scale(mesh_prim_path, desired_len):
     print(f"Max Side: {max_side} meters")
     return desired_len/max_side
 
+def clear_translation_and_scale(prim):
+    """
+    Clears all translation and scale transformations on the given prim,
+    but keeps the rotation transformations intact.
+    """
+    # Wrap the prim as an Xformable
+    xform = UsdGeom.Xformable(prim)
+
+    # Get all transformation operations on the prim
+    xform_ops = xform.GetOrderedXformOps()
+
+    # Iterate through each operation and clear translation and scale transformations
+    for op in xform_ops:
+        op_type = op.GetOpType()
+        
+        # Clear only translation and scale types
+        if op_type in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale):
+            op.GetAttr().Clear()  # Clear the specific transformation operation
+        
+    # Update xformOpOrder to remove cleared operations, keeping only rotations
+    new_xform_op_order = [op for op in xform.GetOrderedXformOps() if op.GetOpType() not in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale)]
+    xform.SetXformOpOrder(new_xform_op_order)
+
+    print(f"Cleared translation and scale for prim: {prim.GetPath()}")
+
+def clear_transforms_for_parents(prim):
+    """
+    Clears translation and scale transformations for the given prim and all its parent nodes.
+    """
+    # Clear transformations for the current prim
+    clear_translation_and_scale(prim)
+
+    # Traverse up the hierarchy to clear transformations for all parent nodes
+    parent = prim
+    
+    while parent.GetParent():
+        clear_translation_and_scale(parent)
+        parent = parent.GetParent()
+
+# Helper function to find the last child prim
+def find_last_child_prim(prim):
+    last_child = None
+    for child in prim.GetAllChildren():
+        last_child = child
+    return last_child if last_child else prim
 
 def rescale_scene(scene_prim_root="/World/Scene"):
+    all_points = []
+    meshes = []
+    scene_prim_root="/World/Scene"
+    mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
+    
+    for prim_path in mesh_prim_path:
+        mesh_prim = get_prim_at_path(prim_path)
+        mesh = UsdGeom.Mesh(mesh_prim)
+        
+        points = mesh.GetPointsAttr().Get()
+        face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()
+        face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()
+        meshes.append((points, face_vertex_counts, face_vertex_indices))
+        
+        points_attr = mesh.GetPointsAttr()
+        points = points_attr.Get()
+        xformable = UsdGeom.Xformable(mesh_prim)
+        world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+  
+        # Transform each point to world coordinates
+        transformed_points = [world_transform.Transform(point) for point in points]
+        if transformed_points:
+            all_points.extend(transformed_points)  # Aggregate points
+    
 
     mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
+    # for prim_path in mesh_prim_path:
+    #     mesh_prim = get_prim_at_path(prim_path=prim_path)
+    #     clear_transforms_for_parents(mesh_prim)
+
+    # Get the root prim of the scene
+    root_prim = get_prim_at_path("/World/Scene")
+
+    # Initialize cumulative rotation as an identity quaternion
+    cumulative_rotation = Gf.Quatf(1, 0, 0, 0)  # Identity quaternion
+    original_up_vector = Gf.Quatd(0,0, 0, 1)
+    # Traverse from root prim to the last child and accumulate rotations
+
+    current_prim = get_prim_at_path(prim_path=mesh_prim_path[0])
+    while current_prim != root_prim:
+        # Check if the current prim has a transform
+        if current_prim.IsA(UsdGeom.Xform):
+            xform = UsdGeom.Xform(current_prim)
+            xform_ops = xform.GetOrderedXformOps()
+
+            # Extract and accumulate rotation quaternions
+            for op in xform_ops:
+                print(op.GetOpType())
+                if op.GetOpType() == UsdGeom.XformOp.TypeOrient:
+                    rotation_quaternion = op.Get()  # Get quaternion as Gf.Quatf or Gf.Quatd
+                    print(rotation_quaternion)
+                    cumulative_rotation = rotation_quaternion * cumulative_rotation
+        # Move to the parent prim
+        current_prim = current_prim.GetParent()
+        
+    # Output the final cumulative rotation
+    print("Cumulative Rotation Quaternion from Root to Last Child:", cumulative_rotation)
+    # Convert the up vector into a quaternion with zero scalar part
+    #v_quat = Gf.Quatd(0, original_up_vector)
+
+    # Apply the quaternion rotation: rotated_vector = q * v * q.inverse()
+    rotated_quaternion = cumulative_rotation * original_up_vector * cumulative_rotation.GetInverse()
+
+    # Extract the vector part of the resulting quaternion
+    up_axis = rotated_quaternion.GetImaginary()
+    print("Transformed Up Axis:", up_axis)
+    abs_up_axis = Gf.Vec3d(abs(up_axis[0]), abs(up_axis[1]), abs(up_axis[2]))
+    if abs_up_axis[0] >= abs_up_axis[1] and abs_up_axis[0] >= abs_up_axis[2]:
+        # X-axis is dominant
+        if up_axis[0] > 0:
+            mapped_axis = "x"
+        else:
+            mapped_axis = "-x"
+    elif abs_up_axis[1] >= abs_up_axis[0] and abs_up_axis[1] >= abs_up_axis[2]:
+        # Y-axis is dominant
+        if up_axis[1] > 0:
+            mapped_axis = "y"
+        else:
+            mapped_axis = "-y"
+    else:
+        # Z-axis is dominant
+        if up_axis[2] > 0:
+            mapped_axis = "z"
+        else:
+            mapped_axis = "-z"
+
+    print("Mapped Up Axis:", mapped_axis)
+    
+        
+
+
+    centers=[]
+    y_mins=[]
+    x_mins=[]
+    z_mins=[]
+    voxel_grids = []
+    
+    for mesh_data in meshes:
+        o3d_mesh = convert_to_open3d_mesh(mesh_data)
+
+        # Compute minimal y-coordinate
+        y_min = o3d_mesh.get_min_bound()[1]
+        x_min = o3d_mesh.get_min_bound()[0]
+        z_min = o3d_mesh.get_min_bound()[2]
+        center = o3d_mesh.get_center()
+        o3d_mesh.translate(-center)  # Center the mesh by translating it to the origin based on the adjusted center
+        print("Adjusted Center:", center)
+
+        # scale_factor = args_cli.max_len / max(o3d_mesh.get_max_bound() - o3d_mesh.get_min_bound())
+        # o3d_mesh.scale(scale_factor, center=(0, 0, 0))
+        
+
+        # Compute the center and adjust the y-coordinate to the minimum y
+
+        # Store the adjusted center and y_min for later calculations
+        centers.append(center)
+        y_mins.append(y_min)
+        x_mins.append(x_min)
+        z_mins.append(z_min)
+    # mesh_prim = get_prim_at_path('/World/Scene')
+    # #mesh_prim = get_prim_at_path(mesh_prim_path[0])
+    # #max_coords, min_coords = get_minmax_mesh_coordinates(mesh_prim)
+    
+    # mesh = UsdGeom.Mesh(mesh_prim)
+    # points_attr = mesh.GetPointsAttr()
+    # points = points_attr.Get()
+    # import pdb; pdb.set_trace()
+    # # Get the world transformation matrix for the mesh
+    # xformable = UsdGeom.Xformable(mesh_prim)
+    # world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+
+    # #import pdb; pdb.set_trace()
+    # # Transform each point to world coordinates
+    # transformed_points = [world_transform.Transform(point) for point in points]
+
+    # # Initialize min/max coordinates and centroid
+    # max_coords = Gf.Vec3f(float('-inf'), float('-inf'), float('-inf'))
+    # min_coords = Gf.Vec3f(float('inf'), float('inf'), float('inf'))
+    
+
+    # # Calculate min/max coordinates and accumulate for centroid
+    # for point in transformed_points:
+    #     max_coords[0] = max(max_coords[0], point[0])
+    #     max_coords[1] = max(max_coords[1], point[1])
+    #     max_coords[2] = max(max_coords[2], point[2])
+
+    #     min_coords[0] = min(min_coords[0], point[0])
+    #     min_coords[1] = min(min_coords[1], point[1])
+    #     min_coords[2] = min(min_coords[2], point[2])
+
+    #import pdb; pdb.set_trace()
+    # Calculate the mean center
+    mean_center = np.mean(centers, axis=0)
+    global_y_min = min(y_mins)
+    global_x_min = min(x_mins)
+    global_z_min = min(z_mins)
+    if mapped_axis == '-y':
+        mean_center[1] = global_y_min
+    if mapped_axis == '-x':
+        mean_center[0] = global_x_min
+    if mapped_axis == '-z':
+        mean_center[2] = -global_z_min
+    if mapped_axis == 'y':
+        mean_center[1] = -global_y_min
+    if mapped_axis == 'x':
+        mean_center[0] = -global_x_min
+    if mapped_axis == 'z':
+        mean_center[2] = global_z_min
+    centroid = mean_center
+
+    mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
+    # for prim_path in mesh_prim_path:
+    #     mesh_prim = get_prim_at_path(prim_path=prim_path)
+    #     clear_transforms_for_parents(mesh_prim)
+    root_prim = get_prim_at_path("/World/Scene")
+
+    # Traverse all descendants of the root prim
+    for prim in Usd.PrimRange(root_prim):
+        if prim.IsA(UsdGeom.Xform):  # Check if the prim has transform attributes
+            xform = UsdGeom.Xform(prim)
+            #Get all transformation operations on the prim
+            xform_ops = xform.GetOrderedXformOps()
+
+            # Iterate through each operation and clear translation and scale transformations
+            for op in xform_ops:
+                op_type = op.GetOpType()
+                
+                # Clear only translation and scale types
+                if op_type in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale):
+                    op.GetAttr().Clear()  # Clear the specific transformation operation
+
+            # Update xformOpOrder to remove cleared operations, keeping only rotations
+            new_xform_op_order = [op for op in xform.GetOrderedXformOps() if op.GetOpType() not in (UsdGeom.XformOp.TypeTranslate, UsdGeom.XformOp.TypeScale)]
+            xform.SetXformOpOrder(new_xform_op_order)
+
+            # Clear the transformation by setting identity transforms
+            #xform.ClearXformOpOrder()  # Clears all transform operations
+            #xform.AddTransformOp().Set(Gf.Matrix4d(1.0))  # Sets identity matrix as the transform
+
+
     print(mesh_prim_path)
 
     scale_factor = get_scale(mesh_prim_path, args_cli.max_len)
     print(scale_factor)
     print(f"Scaling factor: {scale_factor}")
 
+    # # Apply the scaling to the mesh
+    # for prim_path in mesh_prim_path:
+    #     mesh_prim = get_prim_at_path(prim_path=prim_path)
+    #     xform = UsdGeom.Xformable(mesh_prim)
+    #     scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
+    #     xform.ClearXformOpOrder()  # Clear any existing transformations
+    #     xform.AddTransformOp().Set(scale_transform)
 
-    # Apply the scaling to the mesh
     for prim_path in mesh_prim_path:
         mesh_prim = get_prim_at_path(prim_path=prim_path)
+        
+        #clear_transforms_for_parents(mesh_prim)
         xform = UsdGeom.Xformable(mesh_prim)
+        #xform.ClearXformOpOrder()
+        # Get all transformation operations on the prim
+        #xform_ops = xform.GetOrderedXformOps()
+
+        shift_transform = Gf.Matrix4d().SetTranslate(Gf.Vec3d(-centroid[0], -centroid[1], -centroid[2]))
         scale_transform = Gf.Matrix4d().SetScale(Gf.Vec3d(scale_factor, scale_factor, scale_factor))
-        xform.ClearXformOpOrder()  # Clear any existing transformations
-        xform.AddTransformOp().Set(scale_transform)
+        #xform.ClearXformOpOrder()  # Clear any existing transformations
+        #xform.AddTransformOp().Set(scale_transform)
+        
+        combined_transform = shift_transform*scale_transform
+        #combined_transform = scale_transform
+        xform.AddTransformOp().Set(combined_transform)
+    
+    return mapped_axis
 
 
 def remove_prim(prim, level=0):
@@ -418,8 +680,8 @@ def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, 
         for y in range(occupancy_grid.shape[1]):
             if occupancy_grid[x, y] == target:  
                 # Calculate position based on cell coordinates
-                cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0]-env_size/2, (y*cell_size)+env_origin[1]-env_size/2, base_height+h_off)
-
+                #cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0]+env_size/2, (y*cell_size)+env_origin[1]+env_size/2, base_height+h_off)
+                cube_pos = Gf.Vec3f((x*cell_size), (y*cell_size), base_height+h_off)
                 # Define the cube's USD path
                 cube_prim_path = f"/World/OccupancyBlocks/Block_{env_id}_{x}_{y}_{z}_{target}"
 
@@ -487,49 +749,11 @@ def voxelize_mesh(mesh, voxel_size):
     voxel_grid = o3d.geometry.VoxelGrid.create_from_triangle_mesh(mesh, voxel_size)
     return voxel_grid
     
-def run_simulator(sim, scene_entities, output, stage):
+def run_simulator(sim, scene_entities, output, stage, mapped_axis):
     """Run the simulator."""
     # Define simulation stepping
     
-        
-    all_points = []
-    meshes = []
-    scene_prim_root="/World/Scene"
-    mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
-    
-    for prim_path in mesh_prim_path:
-        mesh_prim = stage.GetPrimAtPath(prim_path)
-        mesh = UsdGeom.Mesh(mesh_prim)
-        
-        points = mesh.GetPointsAttr().Get()
-        face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()
-        face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()
-        meshes.append((points, face_vertex_counts, face_vertex_indices))
-        
-        points_attr = mesh.GetPointsAttr()
-        points = points_attr.Get()
-        xformable = UsdGeom.Xformable(mesh_prim)
-        world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
-  
-        # Transform each point to world coordinates
-        transformed_points = [world_transform.Transform(point) for point in points]
-        if transformed_points:
-            all_points.extend(transformed_points)  # Aggregate points
-    
-
-        
-    occ_grid = initialize_occupancy_grid(20,20,20)
-    origin = (-5.,-5.,0.)
-    occ_grid = populate_occupancy_grid(all_points, occ_grid, origin, 0.5)
-    #import pdb; pdb.set_trace()  
-    
-    cell_size = min(10./10., 10./10.)  # meters per cell
-    slice_height = 10.0 / 20.0  # height of each slice in meters
-    
-    #if self.cfg.vis_occ:
-    #for j in range(occ_grid.shape[0]):
-    
-                             
+   
     sim_dt = sim.get_physics_dt()
     sim_time = 0.0
     count = 0
@@ -539,34 +763,138 @@ def run_simulator(sim, scene_entities, output, stage):
     output_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "output")
     os.makedirs(output_dir, exist_ok=True)
 
-        
-    while simulation_app.is_running():
-    #for kk in range(1):
-        if len(all_points) > 0:
-            pc_markers.visualize(translations=np.array(all_points))
-            
-        voxel_size = 0.5
-        for mesh_data in meshes:
-          o3d_mesh = convert_to_open3d_mesh(mesh_data)
-          voxel_grid = voxelize_mesh(o3d_mesh, voxel_size)
-  
-          o3d.visualization.draw([voxel_grid])
-        #import pdb; pdb.set_trace()
-        sim.step()
-        camera.update(dt=sim.get_physics_dt())
-        #import pdb; pdb.set_trace()
-        
-        for i in range(occ_grid.shape[2]):
-            # vis occ
-            image_filename = f"occupancy_map_slice_{i}.png"
-            save_occupancy_grid_as_image(occ_grid[:, :, i], os.path.join(output, image_filename))
-            # Save as npy file
-            np.save(os.path.join(output, "occ.npy"), occ_grid[:, :, :])
-            create_blocks_from_occupancy(0, np.array([0.,0.,0.]), 
-                                                occ_grid[:, :, i], cell_size, i*slice_height, i, 20, 1, 25)
+    occ_grid = initialize_occupancy_grid(20,20,20)
 
+    #occ_grid = populate_occupancy_grid(all_points, occ_grid, origin, 0.5)
+    #import pdb; pdb.set_trace()  
+    
+    cell_size = min(10./10., 10./10.)/2  # meters per cell
+    slice_height = 10.0 / 20.0  # height of each slice in meters
+    
+    #if self.cfg.vis_occ:
+    #for j in range(occ_grid.shape[0]):
+            
+    #while simulation_app.is_running():
+    
+    
+    voxel_size = 0.5
+    
+    meshes = []
+    scene_prim_root="/World/Scene"
+    mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
+    merged_points = []
+    merged_face_vertex_indices = []
+    merged_face_vertex_counts = []
+    vertex_offset = 0  # This will help to adjust indices as we merge meshes
+    for prim_path in mesh_prim_path:
+        # Get the mesh prim
+        mesh_prim = get_prim_at_path(prim_path)
+        mesh = UsdGeom.Mesh(mesh_prim)               
+        
+        # Get points (vertices), face vertex indices, and face vertex counts
+        points = mesh.GetPointsAttr().Get()  # List of Gf.Vec3f or Gf.Vec3d
+        face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()  # Indices list
+        face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()  # List of face sizes (triangles/quads)
+
+        # Add points to merged points list
+        merged_points.extend(points)
+        
+        # Offset and add face vertex indices to merged list
+        adjusted_indices = [i + vertex_offset for i in face_vertex_indices]
+        merged_face_vertex_indices.extend(adjusted_indices)
+        
+        # Add face counts directly (no need for offset here)
+        merged_face_vertex_counts.extend(face_vertex_counts)
+        
+        # Update vertex offset
+        vertex_offset += len(points)
+
+    # Create a single tuple with merged points, face counts, and face indices
+    merged_mesh = (merged_points, merged_face_vertex_counts, merged_face_vertex_indices)
+
+    o3d_mesh = convert_to_open3d_mesh(merged_mesh)
+    # Rescale the mesh
+    scale_factor = args_cli.max_len / max(o3d_mesh.get_max_bound() - o3d_mesh.get_min_bound())
+    o3d_mesh.scale(scale_factor, center=(0, 0, 0))
+    
+    voxel_grid = voxelize_mesh(o3d_mesh, voxel_size)
+    voxel_centers = np.array([voxel.grid_index for voxel in voxel_grid.get_voxels()])
+    x_off = (20-(max(voxel_centers[:,0]) - min(voxel_centers[:,0])))//2
+    z_off = (20-(max(voxel_centers[:,2]) - min(voxel_centers[:,2])))//2
+    y_off = (20-(max(voxel_centers[:,1]) - min(voxel_centers[:,1])))//2
+    #import pdb; pdb.set_trace()
+
+    # Assume `points` is an Nx3 numpy array of points in the original coordinate system
+    # Apply the transformation to map the coordinates
+
+
+    for i in range(len(voxel_centers)):
+        occ_grid[voxel_centers[i][0],voxel_centers[i][1],voxel_centers[i][2]]=1
+
+    #o3d.visualization.draw([voxel_grid])
+
+    for kk in range(2):
+        # if len(all_points) > 0:
+        #     pc_markers.visualize(translations=np.array(all_points))        
+        sim.step()
+
+    #import pdb; pdb.set_trace()
+    #camera.update(dt=sim.get_physics_dt())
+    #import pdb; pdb.set_trace()
+                             
+    #occ_grid = np.transpose(occ_grid,[0,2,1])
+    #occ_grid = np.flip(occ_grid, axis=1)
+    up_axis = mapped_axis
+    if up_axis == 'x':
+        # Rotate so X is up
+        occ_grid = np.transpose(occ_grid, [2, 1, 0])  # Z becomes X, Y remains, X becomes Z
+        occ_grid = np.flip(occ_grid, axis=1)           # Flip along the new Y-axis
+
+    elif up_axis == '-x':
+        # Rotate so -X is up
+        occ_grid = np.transpose(occ_grid, [2, 1, 0])   # Z becomes X, Y remains, X becomes Z
+        occ_grid = np.flip(occ_grid, axis=2)           # Flip along the new Z-axis
+        
+    elif up_axis == 'y':
+        occ_grid = np.transpose(occ_grid, [0, 2, 1])   # X remains, Z becomes Y, Y becomes Z
+        
+    elif up_axis == '-y':
+        # Rotate so -Y is up
+        occ_grid = np.transpose(occ_grid, [0, 2, 1])   # X remains, Z becomes Y, Y becomes Z
+        occ_grid = np.flip(occ_grid, axis=1)           # Flip along the new Y-axis
+    elif up_axis == 'z':
+        # Rotate so Z is up
+        #occ_grid = np.transpose(occ_grid, [1, 0, 2])   # Swap X and Y axes
+        occ_grid = np.flip(occ_grid, axis=0)           # Flip along the new X-axis
+        
+    elif up_axis == '-z':
+        occ_grid = np.flip(occ_grid, axis=0)           # Flip along the new X-axis
+        occ_grid = np.flip(occ_grid, axis=2)           # Flip along the new X-axis
+        
+        #occ_grid = np.flip(occ_grid, axis=0)           # Flip along the new X-axis
+        # Rotate so -Z is up
+        #occ_grid = np.transpose(occ_grid, [1, 0, 2])   # Y becomes X, X becomes Y, Z remains
+        #occ_grid = np.flip(occ_grid, axis=0)           # Flip along the new X-axis
+    for kk in range(2):
+        # if len(all_points) > 0:
+        #     pc_markers.visualize(translations=np.array(all_points))        
+        sim.step()
+
+    for i in range(occ_grid.shape[2]):
+        # vis occ
+        image_filename = f"occupancy_map_slice_{i}.png"
+        save_occupancy_grid_as_image(occ_grid[:, :, i], os.path.join(output, image_filename))
+        # Save as npy file
+        np.save(os.path.join(output, "occ.npy"), occ_grid[:, :, :])
+        create_blocks_from_occupancy(0, np.array([0.,0.,0.]), 
+                                            occ_grid[:, :, i], cell_size, i*slice_height, i, 20, 1, 25)
+    for kk in range(2):
+        # if len(all_points) > 0:
+        #     pc_markers.visualize(translations=np.array(all_points))        
+        sim.step()
     vp_api = get_active_viewport()
     capture_viewport_to_file(vp_api, os.path.join(output, "vis.png"))
+    
     #print(camera_pos)
     #if points_3d_world.squeeze().size()[0] > 0:
     #    pc_markers.visualize(translations=points_3d_world.squeeze())
@@ -585,15 +913,17 @@ def main():
     for i, scene_path in enumerate(scenes_path):
         scene_entities = setup_scene(world, scene_path,stage)
         if args_cli.rescale:
-            rescale_scene()
-        import pdb; pdb.set_trace()
+            mapped_axis= rescale_scene()
+        #import pdb; pdb.set_trace()
         relative_path = os.path.relpath(scene_path, args_cli.input)
         dest_path = os.path.join(args_cli.output, relative_path)
         output = os.path.split(dest_path)[0]
         
         world.reset()
+
         #generate_occupancy_maps(world, output)
-        run_simulator(world, scene_entities, output, stage)
+        run_simulator(world, scene_entities, output, stage, mapped_axis)
+        
         print(scene_path)
         #import pdb; pdb.set_trace()
         world.clear()
