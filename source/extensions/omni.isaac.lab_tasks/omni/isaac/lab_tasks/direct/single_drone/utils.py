@@ -1,9 +1,12 @@
 import torch
 import numpy as np
-import omni
-from omni.isaac.core.utils.prims import get_prim_at_path
-from pxr import UsdGeom, Usd, Gf, Sdf
-import open3d as o3d
+try:
+    import omni
+    from omni.isaac.core.utils.prims import get_prim_at_path
+    from pxr import UsdGeom, Usd, Gf, Sdf
+    import open3d as o3d
+except:
+    pass
 
 def merge_point_clouds(pc1, pc2):
     if np.asarray(pc1.points).shape[0] == 0:
