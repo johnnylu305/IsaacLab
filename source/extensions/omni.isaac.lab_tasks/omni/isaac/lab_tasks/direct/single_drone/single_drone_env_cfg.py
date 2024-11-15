@@ -60,27 +60,27 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     vis_pointcloud = False
     save_env_ids = [0, 1]
     save_img_freq = 30 #10
-    random_initial = False
+    random_initial = True #False
 
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 60 #30 # in meter, 2 cells is one unit
 
     decimation = 2 #5 # _apply_action will run decimation time
     #decimation = 10 # _apply_action will run decimation time
-    num_actions = 5 # x, y, z, yaw, pitch
+    num_actions = 3 #3 #5 # x, y, z, yaw, pitch
     num_states = 0
     episode_length_s = 20000 # timeout
     debug_vis = False #True
 
     # obv
     img_t = 2 
-    total_img = 50 #50
+    total_img = 50 #50 #50 #50
     goal = 0.9 #0.92
 
     # occ grid
     # TODO need to tune free threshold
-    decrement = 0.01 #0.2
-    increment = 1.0
+    decrement = 0.01 #0.5 #0.01 #0.2
+    increment = 1.0 #10. #1.0
     max_log_odds = 10.
     min_log_odds = -10.
 
@@ -91,14 +91,14 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     #camera_w, camera_h = 1000, 1000 # try 400 x 400 in the future
 
     # obv
-    num_observations = total_img * 5
+    num_observations = 1 * 5 #total_img * 5
     img_observations = [img_t, camera_h, camera_w, 3]
     pose_observations = [total_img, 5] # N, xyz + yaw + pitch
     occ_observations = [grid_size, grid_size, grid_size, 4] # label + xyz
 
     # reward scales
     occ_reward_scale = 30.0
-    col_reward_scale = -1 #-30.0 #-10.0
+    col_reward_scale = -10 #-1 #-30.0 #-10.0
 
     # simulation
     sim: SimulationCfg = SimulationCfg(

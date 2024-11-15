@@ -43,10 +43,13 @@ import os
 import torch
 from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
+from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.vec_env import VecNormalize
+from sb3_ppo_cus import PPO_Cus
+
 
 from omni.isaac.lab.envs import (
     DirectMARLEnv,
@@ -123,12 +126,18 @@ class RewardLoggingCallback(BaseCallback):
                 self.writer.add_scalar(f"Aggregated train_cus/{train_cus_type}", v, step)
 
         if self.num_timesteps % self.freq == 0:
-            x_s, y_s, z_s, pitch_s, yaw_s = torch.exp(self.model.policy.log_std).detach().cpu().numpy()
-            self.writer.add_scalar("train_cus/x_std", x_s, current_step)
-            self.writer.add_scalar("train_cus/y_std", y_s, current_step)
-            self.writer.add_scalar("train_cus/z_std", z_s, current_step)
-            self.writer.add_scalar("train_cus/pitch_std", pitch_s, current_step)
-            self.writer.add_scalar("train_cus/yaw_std", yaw_s, current_step)
+            try:
+                x_s, y_s, z_s, pitch_s, yaw_s = torch.exp(self.model.policy.log_std).detach().cpu().numpy()
+                self.writer.add_scalar("train_cus/x_std", x_s, current_step)
+                self.writer.add_scalar("train_cus/y_std", y_s, current_step)
+                self.writer.add_scalar("train_cus/z_std", z_s, current_step)
+                self.writer.add_scalar("train_cus/pitch_std", pitch_s, current_step)
+                self.writer.add_scalar("train_cus/yaw_std", yaw_s, current_step)
+            except:
+                x_s, y_s, z_s = torch.exp(self.model.policy.log_std).detach().cpu().numpy()
+                self.writer.add_scalar("train_cus/x_std", x_s, current_step)
+                self.writer.add_scalar("train_cus/y_std", y_s, current_step)
+                self.writer.add_scalar("train_cus/z_std", z_s, current_step)
         return True
         
     def _on_training_end(self) -> None:
@@ -185,7 +194,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             clip_reward=np.inf,
         )
 
-    agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
+    agent = PPO_Cus(policy_arch, env, verbose=1, **agent_cfg)
     new_logger = configure(log_dir, ["stdout", "tensorboard"])
     agent.set_logger(new_logger)
 

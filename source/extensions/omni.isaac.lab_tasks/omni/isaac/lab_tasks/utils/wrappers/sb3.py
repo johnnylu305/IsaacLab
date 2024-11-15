@@ -31,6 +31,7 @@ from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, Vec
 from omni.isaac.lab.envs import DirectRLEnv, ManagerBasedRLEnv
 sys.path.append('./')
 from source.standalone.mad3d.sb3_encoder import CustomCombinedExtractor
+from source.standalone.mad3d.sb3_policy_cus import MultiInputActorCriticPolicyCus
 
 """
 Configuration Parser.

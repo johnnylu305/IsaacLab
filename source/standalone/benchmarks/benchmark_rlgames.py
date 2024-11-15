@@ -223,7 +223,7 @@ def main():
         # parse tensorboard file stats
         tensorboard_log_dir = os.path.join(log_root_path, log_dir, "summaries")
         log_data = parse_tf_logs(tensorboard_log_dir)
-
+        
         # prepare RL timing dict
         rl_training_times = {
             "Environment only step time": log_data["performance/step_time"],

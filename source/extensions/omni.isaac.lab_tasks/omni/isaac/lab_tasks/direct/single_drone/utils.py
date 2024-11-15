@@ -298,7 +298,7 @@ def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size,
     # remove offset
    
     xyz -= env_origins[env_ids]
-    
+
     x, y, z = xyz.detach().cpu().numpy()
 
     x_, y_, z_ = x, y, z
@@ -309,6 +309,8 @@ def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size,
     z += org_z
 
     # to voxel id
+    # TODO: this may have bug at boundary
+    # we should try x/env_size*(grid_size-1)? or clamping
     x = np.floor(x/cell_size).astype(np.int32)
     y = np.floor(y/cell_size).astype(np.int32)
     z = np.floor(z/slice_height).astype(np.int32)
@@ -317,6 +319,54 @@ def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size,
     col = (x, y, z) in occs[env_ids]
     #print(f"Env: {env_ids} Map zxy: {z_} {x_} {y_} to voxel_zxy: {z} {x} {y}, Col: {col}")
     return col
+
+
+def check_free(occs, xyz, env_ids, org_x, org_y, org_z, cell_size, slice_height, env_origins, shift=True):
+    # remove offset
+
+    if shift:
+        xyz -= env_origins[env_ids]
+
+    x, y, z = xyz.detach().cpu().numpy()
+
+    x_, y_, z_ = x, y, z
+
+    # smallest point to (0, 0, 0)
+    x += org_x
+    y += org_y
+    z += org_z
+
+    # to voxel id
+    # TODO: this may have bug at boundary
+    # we should try x/env_size*(grid_size-1)? or clamping
+    x = np.floor(x/cell_size).astype(np.int32)
+    y = np.floor(y/cell_size).astype(np.int32)
+    z = np.floor(z/slice_height).astype(np.int32)
+
+    not_free = occs[x, y, z] >= 0.5
+
+    return not_free
+
+
+def check_height(hlimit, xyz, env_ids, org_z, cell_size, slice_height, env_origins, shift=True):
+    # remove offset
+
+    if shift:
+        xyz -= env_origins[env_ids]
+
+    x, y, z = xyz.detach().cpu().numpy()
+
+    x_, y_, z_ = x, y, z
+
+    z += org_z
+
+    # to voxel id
+    z = np.floor(z/slice_height).astype(np.int32)
+
+    not_height = z > hlimit
+
+    return not_height
+
 
 def get_robot_scale(robot_prim_root, desired_max_size):
     crazyflie_prim = get_prim_at_path(prim_path=robot_prim_root)
@@ -499,14 +549,14 @@ def remove_occluded_face(grid_size, obv_grid, face_grid, device):
     faces = torch.tensor([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=torch.float32).to(device)
 
 
-    face_grid = face_grid.bool()
+    face_grid_bool = face_grid.bool()
     # Mask out faces where the obv_grid is non-occupied (obv_grid == 0)
     non_occupied_mask = obv_grid == 0
-    face_grid[non_occupied_mask.unsqueeze(-1).expand(-1, -1, -1, -1, 6)] = False
+    face_grid_bool[non_occupied_mask.unsqueeze(-1).expand(-1, -1, -1, -1, 6)] = False
 
     # remove occluded face
     # Identify visible faces in the grid
-    visible_indices = torch.nonzero(face_grid, as_tuple=True)
+    visible_indices = torch.nonzero(face_grid_bool, as_tuple=True)
 
     # Get indices and directions for occupied voxels
     env_idx, x, y, z, face_idx = visible_indices
@@ -533,12 +583,12 @@ def remove_occluded_face(grid_size, obv_grid, face_grid, device):
     # Check if the adjacent voxel is occupied, making the face occluded
     occluded_mask = obv_grid[env_idx, adj_x, adj_y, adj_z] == 1
 
-    face_grid = face_grid.bool()
+    face_grid_bool = face_grid_bool.bool()
 
     # Update the face_grid to mark occluded faces as False
-    face_grid[env_idx, x, y, z, face_idx] = ~occluded_mask 
+    face_grid_bool[env_idx, x, y, z, face_idx] = ~occluded_mask 
     
-    return face_grid
+    return face_grid_bool
 
 def compute_distance_to_center_distance(fg_masks, w, h):
     image_center = torch.tensor([w / 2, h / 2], device=fg_masks.device)
@@ -567,3 +617,54 @@ def compute_distance_to_center_distance(fg_masks, w, h):
     distances = torch.norm(centroids - image_center, dim=1)
 
     return distances / max_distance
+
+
+def shift_gt_occs(gt_occs, txyz, grid_sizes, env_sizes):
+    # Calculate the scaling factor from environment to grid for each axis
+    scale_factors = grid_sizes / env_sizes  # Assuming element-wise division
+
+    # Convert translation from environment to grid coordinates
+    tx, ty, tz = (txyz * scale_factors).int()
+
+
+    # Apply torch.roll on each axis (x, y, z) for the current environment
+    gt_occs = torch.roll(gt_occs, shifts=(tx, ty, tz), dims=(0, 1, 2))
+
+    return gt_occs
+
+
+def shift_gt_faces(gt_faces, txyz, grid_sizes, env_sizes):
+    # Calculate the scaling factor from environment to grid for each axis
+    scale_factors = grid_sizes / env_sizes  # Assuming element-wise division
+
+    # Convert translation from environment to grid coordinates
+    tx, ty, tz = (txyz * scale_factors).int()
+
+    # Apply torch.roll on each axis (x, y, z) for the current environment
+    # Note: dims=(0, 1, 2) excludes the last dimension for faces
+    gt_faces = torch.roll(gt_faces, shifts=(tx, ty, tz), dims=(0, 1, 2))
+
+    return gt_faces
+
+
+def shift_occs(occs, txyz, grid_sizes, env_sizes):
+    # Convert the set of (x, y, z) coordinates into a NumPy array
+    occs_array = np.array(list(occs), dtype=int)
+
+    # Calculate the scaling factor from environment to grid for each axis
+    scale_factors = grid_sizes / env_sizes  # Assuming element-wise division
+
+    # Convert translation from environment to grid coordinates
+    txyz_scaled = (txyz * scale_factors).cpu().int().numpy()
+
+    # Apply the translation only where z > 0
+    shifted_occs_array = np.where(
+        occs_array[:, 2:] > 0,  # Check if z > 0
+        occs_array + txyz_scaled,  # Apply the translation
+        occs_array  # Keep original coordinates if z <= 0
+    )
+
+    # Convert the result back to a set of tuples
+    shifted_occs_set = set(map(tuple, shifted_occs_array))
+
+    return shifted_occs_set

@@ -23,7 +23,6 @@ def parse_tf_logs(log_dir: str):
     # search log directory for latest log file
     list_of_files = glob.glob(f"{log_dir}/events*")  # * means all if need specific format then *.csv
     latest_file = max(list_of_files, key=os.path.getctime)
-
     log_data = {}
     ea = event_accumulator.EventAccumulator(latest_file)
     ea.Reload()

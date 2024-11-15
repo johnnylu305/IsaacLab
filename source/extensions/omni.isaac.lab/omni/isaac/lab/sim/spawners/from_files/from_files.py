@@ -28,6 +28,7 @@ def spawn_from_multiple_usd_env_id(
     my_asset_list: list[from_files_cfg.UsdFileCfg],
     translation: tuple[float, float, float] | None = None,
     orientation: tuple[float, float, float, float] | None = None,
+    is_random: bool = True
 ) -> list[Usd.Prim]:
     source_prim_paths = []
 
@@ -48,12 +49,15 @@ def spawn_from_multiple_usd_env_id(
             #source_prim_paths = [root_path]
   
     asset_list = []
-    for source_prim_path in source_prim_paths:
+    for i, source_prim_path in enumerate(source_prim_paths):
         full_prim_path = f"{source_prim_path}/{asset_path}"
-        cfg = random.choice(my_asset_list)
+        if is_random:
+            cfg = random.choice(my_asset_list)
+        else:
+            cfg = my_asset_list[i]
         asset_list.append(cfg.usd_path)
         print(full_prim_path)
-        prim = _spawn_from_usd_file(full_prim_path, cfg.usd_path, cfg, translation, orientation)
+        prim = _spawn_from_usd_file(full_prim_path, cfg.usd_path, cfg, translation[i], orientation)
         
 
     return prim, asset_list

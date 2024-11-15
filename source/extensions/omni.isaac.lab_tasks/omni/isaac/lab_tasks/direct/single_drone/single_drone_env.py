@@ -55,7 +55,7 @@ from omni.physx import get_physx_scene_query_interface
 from omni.isaac.core.articulations import ArticulationView
 import omni.isaac.core.utils.prims as prim_utils
 
-from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground, get_seen_face, compute_distance_to_center_distance, remove_occluded_face
+from .utils import bresenhamline, check_building_collision, rescale_scene, rescale_robot, get_robot_scale, compute_orientation, create_blocks_from_occupancy, create_blocks_from_occ_set, create_blocks_from_occ_list, OccupancyGrid, dis_to_z, extract_foreground, get_seen_face, compute_distance_to_center_distance, remove_occluded_face, check_free, shift_gt_occs, shift_gt_faces, shift_occs, check_height
 import time
 from omni.isaac.lab.markers import VisualizationMarkers
 import open3d as o3d 
@@ -80,7 +80,11 @@ class QuadcopterEnv(DirectRLEnv):
                 "coverage_ratio",
                 "collision",
                 "goal",
+                "penalty",
+                "free",
+                "hlimit", 
                 "face_ratio",
+                "all_penalty",
                 "status coverage_ratio",
                 "status obv_face",
                 "status fg",
@@ -132,9 +136,12 @@ class QuadcopterEnv(DirectRLEnv):
         self.gt_faces = torch.zeros((self.cfg.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size, 6), device=self.device)
         # collision status
         self.col = [False for i in range(self.cfg.num_envs)]
+        self.not_free = [False for i in range(self.cfg.num_envs)]
+        self.not_height = [False for i in range(self.cfg.num_envs)]
 
         # x, y, z
         self.robot_pos = torch.zeros((self.cfg.num_envs, 3), device=self.device)
+        self.real_xyz = torch.zeros((self.cfg.num_envs, 3), device=self.device)
         # pitch, yaw
         self.robot_ori = torch.zeros((self.cfg.num_envs, 2), device=self.device)
 
@@ -172,6 +179,8 @@ class QuadcopterEnv(DirectRLEnv):
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         rescale_scene(scene_prim_root="/World/ground/Environment", max_len=13e4)
  
+
+        
 
         # prevent mirror
         self.scene.clone_environments(copy_from_source=True)#True)
@@ -219,9 +228,17 @@ class QuadcopterEnv(DirectRLEnv):
             self.cfg_list = []
             for scene_path in scenes_path:
                 self.cfg_list.append(UsdFileCfg(usd_path=scene_path))
-
+            
+            # random translation
+            tx = torch.randint(-2, 2 + 1, (256, 1))
+            ty = torch.randint(-2, 2 + 1, (256, 1))
+            tz = torch.randint(0, 0 + 1, (256, 1))*0
+            self.txyz = torch.cat((tx, ty, tz), dim=1).to(self.device)
+            # create scenes
             _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
-                                                            env_ids=torch.arange(self.cfg.num_envs), my_asset_list=self.cfg_list)
+                                                            env_ids=torch.arange(self.cfg.num_envs), my_asset_list=self.cfg_list, translation=self.txyz)
+            
+            self.first_asset_list = scene_lists
 
             env_ids = torch.arange(self.cfg.num_envs)
             for i, scene in enumerate(scene_lists):
@@ -240,7 +257,12 @@ class QuadcopterEnv(DirectRLEnv):
                 occ_path = os.path.join(path, "faces.npy")
                 self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
                 #print(torch.sum(self.gt_faces[env_ids[i]]), torch.sum(self.gt_occs[env_ids[i]]), torch.sum(self.gt_faces[env_ids[i]][self.gt_occs[env_ids[i]].bool()]))
-            #exit()
+
+                # shift
+                self.occs[env_ids[i]] = shift_occs(self.occs[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
+                self.gt_occs[env_ids[i]] = shift_gt_occs(self.gt_occs[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
+                self.gt_faces[env_ids[i]] = shift_gt_faces(self.gt_faces[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
+
             """
             for i, scene in enumerate(scene_lists):
                 #TODO: change Occ to Occ_new_2000
@@ -258,6 +280,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.fg_masks = torch.zeros((self.cfg.num_envs, self.cfg.camera_h, self.cfg.camera_w)).to(self.device)
         self.point_cloud = o3d.geometry.PointCloud()
         self.scene_id=0
+        self.h_limit = (torch.ones(self.cfg.num_envs).to(self.device)*10*self.cfg.grid_size/self.cfg.env_size).int()
         # for visualization
         #temp = set()
         #for x in range(self.cfg.grid_size):
@@ -268,6 +291,8 @@ class QuadcopterEnv(DirectRLEnv):
         #cell_size = self.cfg.env_size/self.cfg.grid_size  # meters per cell
         #slice_height = self.cfg.env_size / self.cfg.grid_size  # height of each slice in meters 
         #create_blocks_from_occ_set(0, env_origin, temp, cell_size, slice_height, self.cfg.env_size)
+        self.used_nearest = True 
+        #self.out_limit = torch.zeros(self.cfg.num_envs)
 
     def _pre_physics_step(self, actions: torch.Tensor):
         if self._index >= self.num_points-1:
@@ -284,12 +309,39 @@ class QuadcopterEnv(DirectRLEnv):
         # TODO tune z
         # x: -9.5~9.5, y: -9.5~9.5, z: 0~10
         # using 9.5 instead of 10 to avoid boundary case for collision detection
-        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 1.0*self.cfg.env_size/4.0]).to(self.device)
+        #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 1.0*self.cfg.env_size/4.0]).to(self.device)
+        #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0, self.cfg.env_size/2.0, 1.0*self.cfg.env_size/4.0]).to(self.device)
         #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([0, self.cfg.env_size/2.0, 0.6*self.cfg.env_size/4.0]).to(self.device)
+        self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
 
-        self._yaw = self._actions[:,3]*torch.pi
-        #self._pitch = (self._actions[:,4]+1)*torch.pi/4.
-        self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
+        used_yp = False #False
+        #self.used_nearest = True
+        if self.used_nearest:
+            #print(self._actions.shape)
+            self.real_xyz = self._actions[:, 6:9]
+            #self.real_xyz = (self.real_xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 1.0*self.cfg.env_size/4.0]).to(self.device)
+            self.real_xyz = (self.real_xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
+
+        if used_yp:
+            self._yaw = self._actions[:,3]*torch.pi
+            #self._pitch = (self._actions[:,4]+1)*torch.pi/4.
+            self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
+        else:
+            # 0~1
+            lookatxyz = self._actions[:, 3:6]
+            # -1~1
+            lookatxyz = lookatxyz*2-1
+            # -9.5~9.5, y: -9.5~9.5, z: 0~10
+            #lookatxyz = (lookatxyz+torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-5e-1, self.cfg.env_size/2.0-5e-1, 1.0*self.cfg.env_size/4.0]).to(self.device)
+            lookatxyz = (lookatxyz+torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
+            # compute yaw and pitch
+            dxyz = lookatxyz - self._xyz + 1e-6
+            # Calculate yaw using torch functions
+            self._yaw = torch.atan2(dxyz[:, 1], dxyz[:, 0])
+            # Calculate pitch using torch functions
+            self._pitch = torch.atan2(dxyz[:, 2], torch.sqrt(dxyz[:, 0]**2 + dxyz[:, 1]**2))
+            # Normalize pitch as specified
+            self._pitch = ((self._pitch / torch.pi + 1/5.0) / 2.0 * torch.pi * 5/6.0)
 
         hard_occ = torch.where(self.obv_occ[:, :, :, 1:, 0] >= 0.6, 1, 0)
         num_match_occ = torch.sum(torch.logical_and(hard_occ, self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
@@ -376,9 +428,12 @@ class QuadcopterEnv(DirectRLEnv):
         self.single_observation_space = gym.spaces.Dict()
         self.single_observation_space["policy"] = gym.spaces.Dict()
         # normalize input
-        self.single_observation_space["policy"]["pose_step"] = gym.spaces.Box(low=-1., high=1., shape=(self.num_observations+1,))
-        self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=0., high=1., shape=(self.cfg.img_t*3, self.cfg.camera_h, self.cfg.camera_w))
+        #self.single_observation_space["policy"]["pose_step"] = gym.spaces.Box(low=-1., high=1., shape=(self.num_observations+1,))
+        self.single_observation_space["policy"]["pose_step"] = gym.spaces.Box(low=-20., high=20., shape=(6,))
+        #self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=0., high=1., shape=(self.cfg.img_t*3, self.cfg.camera_h, self.cfg.camera_w))
+        self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=0., high=1., shape=(1, self.cfg.camera_h, self.cfg.camera_w))
         self.single_observation_space["policy"]["occ"] = gym.spaces.Box(low=-1., high=1., shape=(10, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size)) # 4
+        self.single_observation_space["policy"]["aux_cov"] = gym.spaces.Box(low=0., high=1., shape=(1,))
         self.single_action_space = gym.spaces.Box(low=-1, high=1, shape=(self.num_actions,))
 
         # batch the spaces for vectorized environments
@@ -410,11 +465,20 @@ class QuadcopterEnv(DirectRLEnv):
         cell_size = self.cfg.env_size/self.cfg.grid_size # meters per cell
         slice_height = self.cfg.env_size/self.cfg.grid_size  # height of each slice in meters
         
+        #self.out_limit = self.robot_pos[:, 2]>self.h_limit
+
         # collision detection
         for i in env_ids:
             self.col[i] = check_building_collision(self.occs, self.robot_pos[i].clone(), i, org_x, org_y, org_z, 
                                                    cell_size, slice_height, self._terrain.env_origins)
-                
+            if self.used_nearest:
+                self.not_free[i] = check_free(self.obv_occ[i, :, :, :, 0], self.real_xyz[i].clone(), i, org_x, org_y, org_z, 
+                                              cell_size, slice_height, self._terrain.env_origins, False)
+            else:
+                self.not_free[i] = check_free(self.obv_occ[i, :, :, :, 0], self.robot_pos[i].clone(), i, org_x, org_y, org_z, 
+                                              cell_size, slice_height, self._terrain.env_origins)
+            self.not_height[i] = check_height(self.h_limit[i], self.real_xyz[i].clone(), i, org_z, 
+                                              cell_size, slice_height, self._terrain.env_origins, False)
 
         # robot pose
         for i in env_ids:
@@ -473,6 +537,8 @@ class QuadcopterEnv(DirectRLEnv):
             
             offset = torch.tensor([self.cfg.env_size/2, self.cfg.env_size/2,0]).to(self.device)
             if not self.col[i] and points_3d_world[i][mask].shape[0] > 0:
+            # TODO: consider all?
+            #if (not self.col[i] and not self.not_free[i] and not self.not_height[i] or self.env_step[i].int()==0) and points_3d_world[i][mask].shape[0] > 0:
                 ratio = self.cfg.grid_size/self.cfg.env_size
                 self.grid.trace_path_and_update(i, torch.floor(self._camera.data.pos_w[i]-self._terrain.env_origins[i]+offset)*ratio, 
                                                 torch.floor((points_3d_world[i]-self._terrain.env_origins[i]+offset))*ratio)
@@ -493,7 +559,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_face', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_newset_h20_auxoff_neg20', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -524,14 +590,21 @@ class QuadcopterEnv(DirectRLEnv):
                         #create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
                         #                             vis_occ[j, :, :, i], cell_size, i*slice_height, i, self.cfg.env_size, 0, 30)
 
+        #for i in range(self.cfg.num_envs):
+            # free to unknown
+            #self.obv_occ[i, :, :, self.h_limit[i]+1:][self.obv_occ[i, :, :, self.h_limit[i]+1:] < 0.5] = 0.5
+
         hard_occ = torch.where(self.obv_occ[:, :, :, :, 0] >= 0.6, 1, 0)
 
 
-        #print(torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :])))
+
+        #print(torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :])), torch.sum(self.gt_faces[:, :, :, 1:, :]))
         # remove the occluded face by checking current occ grid
         # the face amount may still larger than gt because current occ grid is incomplete
+        #print(torch.sum(self.obv_face[:, :, :, 1:]))
         self.obv_face = remove_occluded_face(self.cfg.grid_size, hard_occ, self.obv_face, self.device)
         #print(torch.sum(self.obv_face[:, :, :, 1:]))
+        #print(torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :])), torch.sum(self.gt_faces[:, :, :, 1:, :]))
         
 
         hard_occ = hard_occ[:, :, :, 1:]
@@ -549,17 +622,18 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_face', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_newset_h20_auxoff_neg20', f'{self.env_episode[i]}')
+                
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
                 rew = self.coverage_ratio_reward[i, 0] 
-                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{self.face_ratio[i][0]:.3f}.png'),
+                plt.imsave(os.path.join(root_path, f'{i}_depth_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{self.face_ratio[i][0]:.3f}_{self.not_free[i]}_{self.not_height[i]}_{self.real_xyz[i][0]:.3f}_{self.real_xyz[i][1]:.3f}_{self.real_xyz[i][2]:.3f}_{self.h_limit[i]}.png'),
                            np.clip(depth_image[i].detach().cpu().numpy(),0,20).astype(np.uint8),
                            cmap='gray',
                            vmin=0,
                            vmax=20)
-                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{self.face_ratio[i][0]:.3f}.png'),
+                plt.imsave(os.path.join(root_path, f'{i}_rgb_{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{rew:.3f}_{self.face_ratio[i][0]:.3f}_{self.not_free[i]}_{self.not_height[i]}_{self.real_xyz[i][0]:.3f}_{self.real_xyz[i][1]:.3f}_{self.real_xyz[i][2]:.3f}_{self.h_limit[i]}.png'),
                            rgb_image[i].detach().cpu().numpy().astype(np.uint8))
  
 
@@ -575,11 +649,28 @@ class QuadcopterEnv(DirectRLEnv):
 
         occ_face = torch.cat((self.obv_occ, self.obv_face), dim=-1)
 
-        obs = {"pose_step": pose_step,
-               "img": self.obv_imgs.permute(0, 1, 4, 2, 3).reshape(-1, 3 * self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w),
+        gray_scale_img = torch.mean(self.obv_imgs[:, 0, :, :, :], (3))
+
+        rew_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
+
+        # Reshape h_limit to have the same batch dimension as pose_step
+        h_limit_expanded = self.h_limit.unsqueeze(1)  # Shape becomes [num_envs, 1]
+        # Concatenate along the last dimension
+        pose_step = torch.cat(
+            [torch.stack([self.obv_pose_history[i, self.env_step[i].int()] for i in range(self.cfg.num_envs)]).reshape(-1, 5),
+            h_limit_expanded],
+            dim=1
+        )
+
+        obs = {#"pose_step": pose_step,
+               "pose_step": pose_step,
+               #"img": self.obv_imgs.permute(0, 1, 4, 2, 3).reshape(-1, 3 * self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w),
+               "img": gray_scale_img.reshape(-1, 1 * 1, self.cfg.camera_h, self.cfg.camera_w),
                #"occ": self.obv_occ.permute(0, 4, 1, 2, 3),
                "occ": occ_face.permute(0, 4, 1, 2, 3),
+               "aux_cov": (self.face_ratio-self.last_face_ratio) * rew_mask
               }
+
         #print(obs["pose"][0].reshape(50, 5))
         #print("A", obs["img"][0].reshape(2, 3, 300, 300)[0])
         #print("B", obs["img"][0].reshape(2, 3, 300, 300)[1])
@@ -620,20 +711,32 @@ class QuadcopterEnv(DirectRLEnv):
         factor = torch.ones(1).to(self.device) * 2
         factor_small = torch.ones(1).to(self.device) * 1
         rew_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
-        
+        free_mask = (torch.tensor(self.not_free)==False).float().to(self.device).reshape(-1, 1)
+        h_mask = (torch.tensor(self.not_height)==False).float().to(self.device).reshape(-1, 1)
+        all_mask = ((torch.tensor(self.col).bool() | (self.face_ratio==self.last_face_ratio).reshape(-1).bool().cpu() | torch.tensor(self.not_free).bool() | torch.tensor(self.not_height).bool())==False).float().to(self.device).reshape(-1, 1)
         #face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
 
+        """
         rewards = {
-            "coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
-            "face_ratio": (self.face_ratio-self.last_face_ratio) * rew_mask * self.cfg.occ_reward_scale,
+            #"coverage_ratio": (self.coverage_ratio_reward - self.last_coverage_ratio) * self.cfg.occ_reward_scale * rew_mask,
+            "face_ratio": (self.face_ratio-self.last_face_ratio) * rew_mask * self.cfg.occ_reward_scale * free_mask * h_mask,
             #"coverage_ratio": (ssim_icr*1+0) * self.cfg.occ_reward_scale * rew_mask * (self.coverage_ratio_reward - self.last_coverage_ratio),
             "collision": torch.tensor(self.col).float().to(self.device).reshape(-1, 1)  * self.cfg.col_reward_scale,
             #"goal": (self.coverage_ratio_reward >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
-            "goal": (self.face_ratio >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
+            #"goal": (self.face_ratio >= self.cfg.goal).int().reshape(-1, 1) * 120. * rew_mask,
+            "penalty": (self.face_ratio==self.last_face_ratio).int() * -10., #* rew_mask,
+            "free": torch.tensor(self.not_free).to(self.device).int().reshape(-1, 1) * -10., #* rew_mask,
+            "hlimit": torch.tensor(self.not_height).to(self.device).int().reshape(-1, 1) * -10., #* rew_mask,
         }
-        
+        """
+
+        rewards = {
+            "face_ratio": (self.face_ratio-self.last_face_ratio) * self.cfg.occ_reward_scale * rew_mask,
+            "all_penalty": (1.0-all_mask)*-20, #-10.
+        }
+
         for k in rewards.keys():
-            rewards[k] /= 100.
+            rewards[k] /= 100. #1 #100.
 
         reward = torch.sum(torch.stack(list(rewards.values())), dim=0).reshape(-1)
         
@@ -666,10 +769,11 @@ class QuadcopterEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
        
         # TODO enable this when using goal reward
+        #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= 0.99)
         #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
         done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.face_ratio.squeeze() >= self.cfg.goal)
         #done = self.env_step.to(self.device) >= self.cfg.total_img - 1
-
+        #done = self.face_ratio.squeeze() >= self.cfg.goal
         
 
         if self.cfg.preplan:
@@ -679,10 +783,10 @@ class QuadcopterEnv(DirectRLEnv):
             for i in range(self.num_envs):
                 if self.coverage_ratio_reward.squeeze()[i] >= self.cfg.goal:
                     x, y, z = self.init_vox_pos[i]
-                    self.goal_grid[x, y, z] += 1
+                    self.goal_grid[x, y, z] += 0.5 #1
                 elif (self.env_step.to(self.device) >= self.cfg.total_img - 1)[i]:
                     x, y, z = self.init_vox_pos[i]
-                    self.goal_grid[x, y, z] -= 1                   
+                    self.goal_grid[x, y, z] -= 0.1 #1                   
         died = done
         #died = torch.logical_or(torch.tensor(self.col).to(self.device), done.to(self.device))
         return died, time_out
@@ -694,6 +798,7 @@ class QuadcopterEnv(DirectRLEnv):
 
         self._robot.reset(env_ids)
         super()._reset_idx(env_ids)
+
 
         #if len(env_ids) == self.num_envs:
             # Spread out the resets to avoid spikes in training when many environments reset at a similar time
@@ -798,8 +903,8 @@ class QuadcopterEnv(DirectRLEnv):
         
         # clear building
         # TODO NOT USE 256 building
-        #for env_id in env_ids:
-        #    delete_prim(f'/World/envs/env_{env_id}/Scene')
+        for env_id in env_ids:
+            delete_prim(f'/World/envs/env_{env_id}/Scene')
 
         # reset occupancy grid
         grid_size = (self.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size)
@@ -844,11 +949,44 @@ class QuadcopterEnv(DirectRLEnv):
             # TODO NOT DELETE SCENE
             #_, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
             #                                             env_ids=env_ids, my_asset_list=self.cfg_list)
-            pass
+            #pass
+            
+            #scenes_path = []
+            # Loop over each batch number
+            #for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
+                # Generate the path pattern for the glob function
+            #    path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
+            #    scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
+            # only use one building
+            #scenes_path = scenes_path[0:256]
+            #scenes_path = scenes_path[0:1]
+            #temp_list = []
+            #for scene_path in scenes_path:
+            #    temp_list.append(UsdFileCfg(usd_path=scene_path))
+            #for i in env_ids:
+            #    self.cfg_list[i] = temp_list[i]
+
+            # random translation
+            # should be integer
+            # otherwise
+            # ex: 0.1 + 0.5 => 0.6 (0)
+            #     0.6 + 0.5 => 1.1 (1)
+            tx = torch.randint(-2, 2 + 1, (256, 1))
+            ty = torch.randint(-2, 2 + 1, (256, 1))
+            tz = torch.randint(0, 0 + 1, (256, 1))*0
+            temp = torch.cat((tx, ty, tz), dim=1)
+            for i in env_ids:
+                self.txyz[i] = temp[i]
+            # create scenes
+            _, scene_lists = spawn_from_multiple_usd_env_id(prim_path_template="/World/envs/env_.*/Scene", 
+                                                            env_ids=env_ids, my_asset_list=[UsdFileCfg(usd_path=self.first_asset_list[i]) for i in env_ids], 
+                                                            translation=self.txyz[env_ids], is_random=False)
+            
+
         
         # load occ set and gt
         # TODO DONT NEED THIS IF WE DO NOT CHANGE BUILDING
-        """
         for i, scene in enumerate(scene_lists):
             #TODO: chnage Occ to Occ_new_2000
             path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
@@ -864,7 +1002,14 @@ class QuadcopterEnv(DirectRLEnv):
             #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
             occ_path = os.path.join(path, "faces.npy")
             self.gt_faces[env_ids[i]] = torch.tensor(np.load(occ_path)).to(self.device)
-        """
+        
+            # shift
+            #print(self.cfg.grid_size, self.cfg.env_size)
+            #print(self.occs[env_ids[i]])
+            self.occs[env_ids[i]] = shift_occs(self.occs[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
+            self.gt_occs[env_ids[i]] = shift_gt_occs(self.gt_occs[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
+            self.gt_faces[env_ids[i]] = shift_gt_faces(self.gt_faces[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
+        
         if not self.cfg.random_initial:
             target_position = np.array([self.cfg.env_size//2-1, self.cfg.env_size//2-1, self.cfg.env_size//4-1])
             yaw, pitch = compute_orientation(target_position)
@@ -899,6 +1044,7 @@ class QuadcopterEnv(DirectRLEnv):
 
             # record robot pos and pitch, yaw
             self.robot_pos[env_ids] = target_position + self._terrain.env_origins[env_ids]
+            self.real_xyz[env_ids] = target_position
             self.robot_ori[env_ids, 0] = 0
             self.robot_ori[env_ids, 1] = yaw
         else:
@@ -938,7 +1084,7 @@ class QuadcopterEnv(DirectRLEnv):
                                 if flag:
                                     possible_positions.append(pos)
                 """
-                """
+                
                 flag = True
                 while flag:
                     # Randomly sample a point within the range
@@ -946,6 +1092,14 @@ class QuadcopterEnv(DirectRLEnv):
                     y = random.randint(-self.cfg.env_size//2+1, self.cfg.env_size//2-1)
                     z = random.randint(1, int(self.cfg.env_size/2*0.6))
                     pos = (x, y, z)
+
+                    target_x, target_y, target_z = self.txyz[env_id].cpu().numpy()
+                    # Calculate the distance from the sampled point to the target point
+                    distance = np.sqrt((x - target_x)**2 + (y - target_y)**2 + (z - target_z)**2)
+
+                    # Check if the distance is within the allowed range
+                    if distance < 5.5:
+                        continue  # If not, sample again
 
                     x += org_x
                     y += org_y
@@ -964,7 +1118,10 @@ class QuadcopterEnv(DirectRLEnv):
                         possible_positions.append(pos)
                         flag = False 
                         #print(random.choice(possible_positions))
-                random_position = random.choice(possible_positions)
+                random_position = possible_positions[0]
+                #random_position = random.choice(possible_positions)
+                
+                # TODO: we do not need this for new net?
                 """
                 for _x in range(-self.cfg.env_size//2+1, self.cfg.env_size//2-1):
                     for _y in range(-self.cfg.env_size//2+1, self.cfg.env_size//2-1):
@@ -983,16 +1140,11 @@ class QuadcopterEnv(DirectRLEnv):
                             if vox_pos not in self.occs[env_id]:
                                 possible_positions.append(pos)
                                 complete_count.append(self.goal_grid[x, y, z])
-
-                # substraction based
-                #weights = sum(complete_count)-complete_count
-                #weights = weights/sum(weights)
-                # inverse based
+                # adaptive sampler
                 inverse_count = 1. / (np.array(complete_count)+np.abs(np.min(complete_count))+1)
                 weights = inverse_count / np.sum(inverse_count)
-                #print(weights)
-                #random_position = random.choices(possible_positions)[0]
                 random_position = random.choices(possible_positions, weights=weights, k=1)[0]
+                """
                 x = random_position[0]+org_x
                 y = random_position[1]+org_y
                 z = random_position[2]+org_z
@@ -1001,13 +1153,18 @@ class QuadcopterEnv(DirectRLEnv):
                 y = np.floor(y/cell_size).astype(np.int32)
                 z = np.floor(z/slice_height).astype(np.int32)
                 self.init_vox_pos[env_id] = [x, y, z]
-                
                 #random_position_tensor = torch.cat((torch.tensor(random_position).unsqueeze(0),random_position_tensor), dim=0)
                 random_position_tensor = torch.tensor(random_position).unsqueeze(0)
-                yaw, pitch = compute_orientation(random_position)
+                #yaw, pitch = compute_orientation(random_position)
+                yaw, pitch = compute_orientation(random_position, self.txyz[env_id].cpu().numpy())
+                # from initial h to max h
+                self.h_limit[env_id] = random.randint(int(random_position[2] * self.cfg.grid_size/self.cfg.env_size), 10)
+                if random.random() <= 1.0: # 0.8: 
+                    self.h_limit[env_id] = 20 #random.randint(9, 10)
+                # TODO: DO NOT NEED THIS FOR CONSTRAINT
                 # 50% chance to multiply yaw by -1
-                if random.random() < 0.5:
-                    yaw *= -1
+                #if random.random() < 0.5:
+                #    yaw *= -1
                 #print('pitch', pitch)
                 target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
                 target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
@@ -1031,9 +1188,9 @@ class QuadcopterEnv(DirectRLEnv):
                 # TODO May need to set robot positions
                 self._camera.set_world_poses(new_positions, orientation_camera, [env_id])
                 self.robot_pos[env_id] = random_position_tensor.to(self.device) + self._terrain.env_origins[env_id]
+                self.real_xyz[env_id] = random_position_tensor.to(self.device) 
                 self.robot_ori[env_id, 0] = -pitch
                 self.robot_ori[env_id, 1] = yaw
-
             self._robot.write_root_pose_to_sim(default_root_state[:, :7], env_ids)
             self._robot.write_root_velocity_to_sim(default_root_state[:, 7:], env_ids)
 
@@ -1054,9 +1211,8 @@ class QuadcopterEnv(DirectRLEnv):
 
         self.env_episode[env_ids.cpu().numpy()] += 1
         # still need this to stablize the initial viewpoint
-        for i in range(1):
+        for i in range(3):
             self.sim.step()
             self.scene.update(dt=0)
 
         self.update_observations(env_ids)
-
