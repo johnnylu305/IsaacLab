@@ -452,8 +452,6 @@ def rescale_scene(scene_prim_root="/World/Scene"):
     # for prim_path in mesh_prim_path:
     #     mesh_prim = get_prim_at_path(prim_path=prim_path)
     #     clear_transforms_for_parents(mesh_prim)
-    if len(mesh_prim_path)>10:
-        import pdb; pdb.set_trace()
 
     root_prim = get_prim_at_path("/World/Scene")
 
@@ -704,7 +702,7 @@ def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, 
             if occupancy_grid[x, y] == target:  
                 # Calculate position based on cell coordinates
                 #cube_pos = Gf.Vec3f((x*cell_size)+env_origin[0]+env_size/2, (y*cell_size)+env_origin[1]+env_size/2, base_height+h_off)
-                cube_pos = Gf.Vec3f((x*cell_size)-cell_size*env_size/2+cell_size, (y*cell_size)-cell_size*env_size/2+cell_size, base_height+h_off)
+                cube_pos = Gf.Vec3f((x*cell_size)-cell_size*env_size/2, (y*cell_size)-cell_size*env_size/2, base_height+h_off)
                 # Define the cube's USD path
                 cube_prim_path = f"/World/OccupancyBlocks/Block_{env_id}_{x}_{y}_{z}_{target}"
 
@@ -842,9 +840,11 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
     
     voxel_grid = voxelize_mesh(o3d_mesh, voxel_size)
     voxel_centers = np.array([voxel.grid_index for voxel in voxel_grid.get_voxels()])
-    x_off = (20-(max(voxel_centers[:,0]) - min(voxel_centers[:,0])))//2
-    z_off = (20-(max(voxel_centers[:,2]) - min(voxel_centers[:,2])))//2
-    y_off = (20-(max(voxel_centers[:,1]) - min(voxel_centers[:,1])))//2
+    #x_off = (20-(max(voxel_centers[:,0]) - min(voxel_centers[:,0])))//2
+    #z_off = (20-(max(voxel_centers[:,2]) - min(voxel_centers[:,2])))//2
+    #y_off = (20-(max(voxel_centers[:,1]) - min(voxel_centers[:,1])))//2
+
+    
     #import pdb; pdb.set_trace()
 
     # Assume `points` is an Nx3 numpy array of points in the original coordinate system
@@ -852,7 +852,7 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
 
 
     for i in range(len(voxel_centers)):
-        occ_grid[voxel_centers[i][0]+x_off,voxel_centers[i][1]+y_off,voxel_centers[i][2]+z_off]=1
+        occ_grid[voxel_centers[i][0],voxel_centers[i][1],voxel_centers[i][2]]=1
 
     #o3d.visualization.draw([voxel_grid])
 
@@ -903,14 +903,48 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
         #     pc_markers.visualize(translations=np.array(all_points))        
         sim.step()
 
-    shifted_occ_grid = np.zeros_like(occ_grid)
+    # shifted_occ_grid = np.zeros_like(occ_grid)
 
-    # Find the first index with a non-zero sum along the third dimension
-    for i in range(occ_grid.shape[2]):
-        if occ_grid[:,:,i].sum() > 0:
-            # Shift the original array to the left and keep the original shape
-            shifted_occ_grid[:,:,0:occ_grid.shape[2]-i] = occ_grid[:,:,i:]
-            break  # Exit after the first non-zero slice is found
+    # # Find the first index with a non-zero sum along the third dimension
+    # for i in range(occ_grid.shape[2]):
+    #     if occ_grid[:,:,i].sum() > 0:
+    #         # Shift the original array to the left and keep the original shape
+    #         shifted_occ_grid[:,:,0:occ_grid.shape[2]-i] = occ_grid[:,:,i:]
+    #         break  # Exit after the first non-zero slice is found
+
+    # Assuming occ_grid is your original 3D array
+    shifted_occ_grid = np.zeros_like(occ_grid)  # Create a new array of the same shape
+
+    # Get the total shape of the grid
+    height, width, depth = occ_grid.shape
+
+    # Find all occupied (non-zero) voxel coordinates in the entire 3D grid
+    occupied_coords = np.argwhere(occ_grid > 0)
+
+    # If there are no occupied voxels, exit (or handle empty grid case)
+    if occupied_coords.size == 0:
+        print("No occupied voxels in the grid.")
+    else:
+        # Calculate the global center of the occupied region (mean of all coordinates)
+        global_center_y, global_center_x, _ = np.mean(occupied_coords, axis=0).astype(int)
+        
+        # Loop through each slice along the third dimension (depth)
+        for i in range(depth):
+            # Get the current slice
+            slice_data = occ_grid[:,:,i]
+            
+            # Calculate the shift needed to move the global center to [10, 10] in each slice
+            shift_y = 10 - global_center_y
+            shift_x = 10 - global_center_x
+            
+            # Shift the slice and place it in the corresponding position in the new array
+            shifted_occ_grid[max(0, shift_y):min(height, height + shift_y), 
+                            max(0, shift_x):min(width, width + shift_x), 
+                            i] = slice_data[max(0, -shift_y):min(height, height - shift_y), 
+                                            max(0, -shift_x):min(width, width - shift_x)]
+
+
+
     occ_grid = shifted_occ_grid
     for i in range(occ_grid.shape[2]):
         # vis occ
@@ -920,7 +954,7 @@ def run_simulator(sim, scene_entities, output, stage, mapped_axis):
         np.save(os.path.join(output, "occ.npy"), occ_grid[:, :, :])
         create_blocks_from_occupancy(0, np.array([0.,0.,0.]), 
                                             occ_grid[:, :, i], cell_size, i*slice_height, i, 20, 1, 25)
-    for kk in range(2):
+    for kk in range(2000):
         # if len(all_points) > 0:
         #     pc_markers.visualize(translations=np.array(all_points))        
         sim.step()

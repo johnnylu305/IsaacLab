@@ -222,7 +222,7 @@ def vis_face_and_voxel(scene_path, face_vis):
 
 
 def main():
-    scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', 'occ.npy'), recursive=True))
+    scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', 'modified_occ_grid.npy'), recursive=True))
     #print(scenes_path)
     print(len(scenes_path))
 

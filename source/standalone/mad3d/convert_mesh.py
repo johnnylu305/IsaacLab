@@ -176,7 +176,7 @@ def run_convert(mesh_path, dest_path):
     """
 
 def main():
-    meshes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*.fbx'), recursive=True))
+    meshes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*.glb'), recursive=True))
     for i, mesh_path in enumerate(meshes_path):
         relative_path = os.path.relpath(mesh_path, args_cli.input)
         dest_path = os.path.join(args_cli.output, relative_path)

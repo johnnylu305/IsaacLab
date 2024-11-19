@@ -198,9 +198,10 @@ class QuadcopterEnv(DirectRLEnv):
         if not self.cfg.preplan:
             scenes_path = []
             # Loop over each batch number
-            for batch_num in range(1, 7):  # Range goes from 1 to 6 inclusive
+            for batch_num in range(1, 2):  # Range goes from 1 to 6 inclusive
                 # Generate the path pattern for the glob function
-                path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                #path_pattern = os.path.join(f'../Dataset/Raw_Rescale_USD/BATCH_{batch_num}', '**', '*[!_non_metric].usd')
+                path_pattern = os.path.join(f'../usd_objaverse_test/glbs', '**', '*[_rescaled].usd')
                 # Use glob to find all .usd files (excluding those ending with _non_metric.usd) and add to the list
                 scenes_path.extend(sorted(glob.glob(path_pattern, recursive=True)))
             # only use one building
@@ -216,14 +217,14 @@ class QuadcopterEnv(DirectRLEnv):
             env_ids = torch.arange(self.cfg.num_envs)
             for i, scene in enumerate(scene_lists):
                 #TODO: change Occ to Occ_new_2000
-                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+                path, file = os.path.split(scene.replace("usd_objaverse_test", "occ_objaverse_bfs"))
                 occ_path = os.path.join(path, "fill_occ_set.pkl")
                 # To load the occupied voxels from the file
                 with open(occ_path, 'rb') as file:
                     self.occs[env_ids[i]] = pickle.load(file)      
 
             for i, scene in enumerate(scene_lists):
-                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))           
+                path, file = os.path.split(scene.replace("usd_objaverse_test", "occ_objaverse_bfs"))           
                 occ_path = os.path.join(path, "occ.npy")
                 self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
 
@@ -752,15 +753,16 @@ class QuadcopterEnv(DirectRLEnv):
         # load occ set and gt
         for i, scene in enumerate(scene_lists):
             #TODO: chnage Occ to Occ_new_2000
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+            path, file = os.path.split(scene.replace("usd_objaverse_test", "occ_objaverse_bfs"))
             occ_path = os.path.join(path, "fill_occ_set.pkl")
             # To load the occupied voxels from the file
             # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
             with open(occ_path, 'rb') as file:
                 self.occs[env_ids[i]] = pickle.load(file)    
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000"))
+            path, file = os.path.split(scene.replace("usd_objaverse_test", "occ_objaverse_bfs"))
             #print(path)
-            occ_path = os.path.join(path, "occ.npy")
+            #occ_path = os.path.join(path, "occ.npy")
+            occ_path = os.path.join(path, "modified_occ_grid.npy")
             self.gt_occs[env_ids[i]] = torch.tensor(np.where(np.load(occ_path)==2, 1, 0)).to(self.device)
             #self.gt_occs[env_ids[i]] = torch.tensor(np.load(occ_path)).permute(1, 2, 0).to(self.device)
             occ_path = os.path.join(path, "faces.npy")
