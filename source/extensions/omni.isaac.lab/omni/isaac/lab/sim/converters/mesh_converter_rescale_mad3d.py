@@ -24,6 +24,7 @@ from pxr import Gf, Vt
 import pxr
 import numpy as np
 import open3d as o3d
+from PIL import Image
 
 
 
@@ -127,7 +128,7 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
         
         #rescale_scene(scene_prim_root=f"/{mesh_file_basename}/geometry")
 
-        rescale_scene(stage, scene_prim_root=f"/{mesh_file_basename}/geometry", max_len=self.max_len)
+        rescale_scene(stage, self.usd_path, scene_prim_root=f"/{mesh_file_basename}/geometry", max_len=self.max_len)
         
         # Move all meshes to underneath new Xform
         stack = [geom_prim]
@@ -512,10 +513,37 @@ def create_usd_from_mesh(vertices, faces, usd_file_path):
 
     return stage
 
+def voxelize_mesh(mesh, voxel_size):
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_triangle_mesh(mesh, voxel_size)
+    return voxel_grid
 
+def initialize_occupancy_grid(x_size, y_size, z_size):
+    # Define the grid size and resolution (cell size)
+    grid = np.zeros((x_size, y_size, z_size))
+    return grid
 
+def save_occupancy_grid_as_image(occupancy_grid, filename):
+    # Define the color mapping for the occupancy grid
+    colors = {
+        1: (0, 0, 0),       # Black for occupied
+        0: (255, 255, 255), # White for unoccupied
+        2: (255, 255, 255)  # Assume it is free
+    }
 
-def rescale_scene(stage, scene_prim_root="/World/Scene",max_len=8):
+    # Create an RGB image from the occupancy grid
+    image_data = np.zeros((occupancy_grid.shape[0], occupancy_grid.shape[1], 3), dtype=np.uint8)
+    for value, color in colors.items():
+        image_data[occupancy_grid == value] = color
+
+    # Create and save the image
+    image = Image.fromarray(image_data, 'RGB')
+    # Ensure the directory exists
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    print(np.array(image).shape)
+    image.save(filename)
+    print(f"Saved occupancy map as image: {filename}")
+
+def rescale_scene(stage,outfile, scene_prim_root="/World/Scene",max_len=8):
     all_points = []
     meshes = []
     #import pdb; pdb.set_trace()
@@ -776,7 +804,25 @@ def rescale_scene(stage, scene_prim_root="/World/Scene",max_len=8):
     offset=0
 
     #o3d.visualization.draw([o3d_mesh])
+    voxel_size=0.5
+    voxel_grid = voxelize_mesh(o3d_mesh, voxel_size)
+    #o3d.visualization.draw([voxel_grid])
+    voxel_coordinates = np.array([voxel_grid.origin + voxel.grid_index * voxel_size for voxel in voxel_grid.get_voxels()])
+    voxel_centers = np.round(voxel_coordinates).astype(int)
+    #import pdb; pdb.set_trace()
+    occ_grid = initialize_occupancy_grid(20,20,20)
+    for i in range(len(voxel_centers)):
+        occ_grid[voxel_centers[i][0]+10,voxel_centers[i][1]+10,voxel_centers[i][2]]=1
+    
+    folder = os.path.dirname(outfile)
+    for i in range(occ_grid.shape[2]):
+        # vis occ
+        image_filename = f"occupancy_map_slice_{i}.png"
+        save_occupancy_grid_as_image(occ_grid[:, :, i], os.path.join(folder, image_filename))
+        # Save as npy file
+        np.save(os.path.join(folder, "occ.npy"), occ_grid[:, :, :])
 
+    
     for prim_path in mesh_prim_path:
         mesh_prim = stage.GetPrimAtPath(prim_path)
         

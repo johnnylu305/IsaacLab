@@ -271,8 +271,10 @@ def rescale_scene(stage, scene_path, scene_prim_root="/World/Scene"):
     mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
     
     for prim_path in mesh_prim_path:
-        mesh_prim = get_prim_at_path(prim_path)
+        #mesh_prim = get_prim_at_path(prim_path)
+        mesh_prim = stage.GetPrimAtPath(prim_path)
         mesh = UsdGeom.Mesh(mesh_prim)
+
         
         points = mesh.GetPointsAttr().Get()
         if points:
@@ -1012,6 +1014,7 @@ def run_simulator(sim, output, stage,scene_path):
         sim.step()
     voxel_size = 0.5
     
+    all_points = []
     meshes = []
     scene_prim_root="/World/Scene"
     mesh_prim_path = get_all_mesh_prim_path(scene_prim_root)
@@ -1021,32 +1024,57 @@ def run_simulator(sim, output, stage,scene_path):
     vertex_offset = 0  # This will help to adjust indices as we merge meshes
 
     for prim_path in mesh_prim_path:
-        # Get the mesh prim
-        mesh_prim = get_prim_at_path(prim_path)
-        mesh = UsdGeom.Mesh(mesh_prim)               
+        #mesh_prim = get_prim_at_path(prim_path)
+        mesh_prim = stage.GetPrimAtPath(prim_path)
+        mesh = UsdGeom.Mesh(mesh_prim)
+        #import pdb; pdb.set_trace()
         
-        # Get points (vertices), face vertex indices, and face vertex counts
-        points = mesh.GetPointsAttr().Get()  # List of Gf.Vec3f or Gf.Vec3d
-        face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()  # Indices list
-        face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()  # List of face sizes (triangles/quads)
+        points = mesh.GetPointsAttr().Get()
+        if points:
+            face_vertex_indices = mesh.GetFaceVertexIndicesAttr().Get()
+            face_vertex_counts = mesh.GetFaceVertexCountsAttr().Get()
+            meshes.append((points, face_vertex_counts, face_vertex_indices))
+            
+            points_attr = mesh.GetPointsAttr()
+            points = points_attr.Get()
+            xformable = UsdGeom.Xformable(mesh_prim)
+            world_transform = xformable.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    
+            # Transform each point to world coordinates
+            transformed_points = [world_transform.Transform(point) for point in points]
+            if transformed_points:
+                all_points.extend(transformed_points)  # Aggregate points
 
-        # Add points to merged points list
-        merged_points.extend(points)
-        
-        # Offset and add face vertex indices to merged list
-        adjusted_indices = [i + vertex_offset for i in face_vertex_indices]
-        merged_face_vertex_indices.extend(adjusted_indices)
-        
-        # Add face counts directly (no need for offset here)
-        merged_face_vertex_counts.extend(face_vertex_counts)
-        
-        # Update vertex offset
-        vertex_offset += len(points)
 
+    from omni.isaac.core.utils.extensions import enable_extension
+    enable_extension('omni.isaac.occupancy_map')
+    from omni.isaac.occupancy_map import generate_image
+    import pdb; pdb.set_trace()
     # Create a single tuple with merged points, face counts, and face indices
     merged_mesh = (merged_points, merged_face_vertex_counts, merged_face_vertex_indices)
 
-    o3d_mesh = convert_to_open3d_mesh(merged_mesh)
+    
+    o3d_mesh = convert_to_open3d_mesh(meshes[0])
+    #o3d.visualization.draw([o3d_mesh])
+    shift_xyz = o3d_mesh.get_center()
+    o3d_mesh.translate(-shift_xyz)
+    #rotation_matrix_open3d = np.array(transform_matrix)[:3, :3]  # Ensure it's 3x3 if you have a 4x4 matrix
+
+    # Apply rotation
+    #o3d_mesh.rotate(cumulative_rotation, center=(0, 0, 0))  # Rotate around origin or mesh center
+
+    #rotation_matrix = o3d.geometry.get_rotation_matrix_from_axis_angle([np.radians(90), 0, 0])
+    #o3d_mesh.rotate(rotation_matrix, center=(0, 0, 0))
+
+    voxel_size=0.5
+    voxel_grid = voxelize_mesh(o3d_mesh, voxel_size)
+    #o3d.visualization.draw([o3d_mesh])
+    voxel_centers = np.array([voxel.grid_index for voxel in voxel_grid.get_voxels()])
+
+    occ_grid = initialize_occupancy_grid(20,20,20)
+    for i in range(len(voxel_centers)):
+        occ_grid[voxel_centers[i][0],voxel_centers[i][1],voxel_centers[i][2]]=1
+
     # # Rescale the mesh
     #scale_factor = args_cli.max_len / max(o3d_mesh.get_max_bound() - o3d_mesh.get_min_bound())
     scale_factor = 1
@@ -1063,86 +1091,85 @@ def run_simulator(sim, output, stage,scene_path):
     # o3d_mesh.rotate(rotation_matrix, center=(0, 0, 0))
 
 
-    merged_points, merged_face_vertex_counts, merged_face_vertex_indices = convert_o3d_mesh_to_numpy(o3d_mesh)
+    #merged_points, merged_face_vertex_counts, merged_face_vertex_indices = convert_o3d_mesh_to_numpy(o3d_mesh)
     
-
+    
     
     # occ_grid = save_o3d_mesh
     # # Assuming occ_grid is your original 3D array
-    # shifted_occ_grid = np.zeros_like(occ_grid)  # Create a new array of the same shape
+    shifted_occ_grid = np.zeros_like(occ_grid)  # Create a new array of the same shape
 
-    # # Get the total shape of the grid
-    # height, width, depth = occ_grid.shapeRescale
+    # Get the total shape of the grid
+    height, width, depth = occ_grid.shape
 
-    # # Find all occupied (non-zero) voxel coordinates in the entire 3D grid
-    # occupied_coords = np.argwhere(occ_grid > 0)
+    # Find all occupied (non-zero) voxel coordinates in the entire 3D grid
+    occupied_coords = np.argwhere(occ_grid > 0)
 
-    # # Check if there are occupied voxels
-    # if occupied_coords.size == 0:
-    #     print("No occupied voxels in the grid.")
-    # else:
-    #     # Calculate global center as midpoint of min and max coordinates
-    #     min_coords = occupied_coords.min(axis=0)
-    #     max_coords = occupied_coords.max(axis=0)
-    #     global_center = (min_coords + max_coords) / 2
-    #     #import pdb; pdb.set_trace()
-    #     # If you need integer values, you can convert to int
-    #     global_center_x, global_center_y,global_center_z = global_center.astype(int)
-    #     #global_center_x, global_center_y, global_center_z = np.mean(occupied_coords, axis=0).astype(int)
-        
-    #     #global_center = np.mean(occupied_coords).astype(int)
-    #     # global_center_x = max_coords[0]
-    #     # global_center_y = max_coords[1]
-    #     # global_center_z = max_coords[2]
-    #     #import pdb; pdb.set_trace()
-    #     # Loop through each slice along the third dimension (depth)
-    #     # for i in range(depth):
-    #     #     # Get the current slice
-    #     #     slice_data = occ_grid[:,:,i]
-
-    #     #     # Calculate the shift needed to move the global center to [10, 10] in each slice
-    #     shift_y = 10 - global_center_y
-    #     shift_x = 10 - global_center_x
-    #     shift_z = 10 - global_center_z
-    #     #shift_x,shift_y, shift_z = (10-center.astype(int))
-    #     # import pdb; pdb.set_trace()
-    #     # Shift the slice and place it in the corresponding position in the new array
-    #     shifted_occ_grid[max(0, shift_x):min(height, height + shift_x), 
-    #                     max(0, shift_y):min(width, width + shift_y), 
-    #                     :] = occ_grid[max(0, -shift_x):min(height, height - shift_x), 
-    #                                     max(0, -shift_y):min(width, width - shift_y),:]
-
-
-    # occ_grid = shifted_occ_grid
-
-
-    # #stage.GetRootLayer().Save()
-    # #stage.RemovePrim("/World/Scene/geometry/Looks")
-    # new_scene_path = scene_path[:-4]+"_rescaled.usd"
-
-    # #stage.GetRootLayer().Export(new_scene_path)
+    # Check if there are occupied voxels
+    # Calculate global center as midpoint of min and max coordinates
+    min_coords = occupied_coords.min(axis=0)
+    max_coords = occupied_coords.max(axis=0)
+    global_center = (min_coords + max_coords) / 2
+    #import pdb; pdb.set_trace()
+    # If you need integer values, you can convert to int
+    global_center_x, global_center_y,global_center_z = global_center.astype(int)
+    #global_center_x, global_center_y, global_center_z = np.mean(occupied_coords, axis=0).astype(int)
     
-    # #temp_stage = Usd.Stage.Open(new_scene_path)
+    #global_center = np.mean(occupied_coords).astype(int)
+    # global_center_x = max_coords[0]
+    # global_center_y = max_coords[1]
+    # global_center_z = max_coords[2]
+    #import pdb; pdb.set_trace()
+    # Loop through each slice along the third dimension (depth)
+    # for i in range(depth):
+    #     # Get the current slice
+    #     slice_data = occ_grid[:,:,i]
+
+    #     # Calculate the shift needed to move the global center to [10, 10] in each slice
+    
+    shift_y = 10 - global_center_y
+    shift_x = 10 - global_center_x
+    shift_z = 10 - global_center_z
+    #shift_x,shift_y, shift_z = (10-center.astype(int))
+    # import pdb; pdb.set_trace()
+    # Shift the slice and place it in the corresponding position in the new array
+    shifted_occ_grid[max(0, shift_x):min(height, height + shift_x), 
+                    max(0, shift_y):min(width, width + shift_y), 
+                    :] = occ_grid[max(0, -shift_x):min(height, height - shift_x), 
+                                    max(0, -shift_y):min(width, width - shift_y),:]
+
+
+    occ_grid = shifted_occ_grid
+
+
+    #stage.GetRootLayer().Save()
+    #stage.RemovePrim("/World/Scene/geometry/Looks")
+    #new_scene_path = scene_path[:-4]+"_rescaled.usd"
+
+    #stage.GetRootLayer().Export(new_scene_path)
+    
+    #temp_stage = Usd.Stage.Open(new_scene_path)
  
     
-    # #import pdb; pdb.set_trace()
+    #import pdb; pdb.set_trace()
             
 
-    # # Find the first index with a non-zero sum along the third dimension
-    # for i in range(occ_grid.shape[2]):
-    #     if occ_grid[:,:,i].sum() > 0:
-    #         # Shift the original array to the left and keep the original shape
-    #         shifted_occ_grid[:,:,0:occ_grid.shape[2]-i] = occ_grid[:,:,i:]
-    #         break  # Exit after the first non-zero slice is found
-    # occ_grid = shifted_occ_grid
-    # for i in range(occ_grid.shape[2]):
-    #     # vis occ
-    #     image_filename = f"occupancy_map_slice_{i}.png"
-    #     save_occupancy_grid_as_image(occ_grid[:, :, i], os.path.join(output, image_filename))
-    #     # Save as npy file
-    #     np.save(os.path.join(output, "occ.npy"), occ_grid[:, :, :])
-    #     create_blocks_from_occupancy(0, np.array([0.,0.,0.]), 
-    #                                         occ_grid[:, :, i], cell_size, i*slice_height, i, 20, 1, 20)
+    # Find the first index with a non-zero sum along the third dimension
+    for i in range(occ_grid.shape[2]):
+        if occ_grid[:,:,i].sum() > 0:
+            # Shift the original array to the left and keep the original shape
+            shifted_occ_grid[:,:,0:occ_grid.shape[2]-i] = occ_grid[:,:,i:]
+            break  # Exit after the first non-zero slice is found
+    occ_grid = shifted_occ_grid
+    for i in range(occ_grid.shape[2]):
+        # vis occ
+        image_filename = f"occupancy_map_slice_{i}.png"
+        save_occupancy_grid_as_image(occ_grid[:, :, i], os.path.join(output, image_filename))
+        # Save as npy file
+        np.save(os.path.join(output, "occ.npy"), occ_grid[:, :, :])
+        create_blocks_from_occupancy(0, np.array([0.,0.,0.]), 
+                                            occ_grid[:, :, i], cell_size, i*slice_height, i, 20, 1, 0)
+    
     for kk in range(200):
         # if len(all_points) > 0:
         #     pc_markers.visualize(translations=np.array(all_points))        

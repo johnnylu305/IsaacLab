@@ -61,7 +61,7 @@ def get_outermost_layer(occ_grid, start_position):
 
     return outermost_layer
 
-file_path = r'/home/hat/Documents/occ_objaverse/glbs/000-000/0a6ad1a88cc04756ba4743badb098f90/'
+#file_path = r'/home/hat/Documents/occ_objaverse/glbs/000-000/0a6ad1a88cc04756ba4743badb098f90/'
 
 file_path = args_cli.input
 
