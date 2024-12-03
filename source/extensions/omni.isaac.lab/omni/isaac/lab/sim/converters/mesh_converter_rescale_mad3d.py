@@ -263,7 +263,7 @@ class MeshConverterRescaleMAD3D(AssetConverterBase):
                 break
 
         temp_stage = Usd.Stage.CreateInMemory()
-        UsdGeom.SetStageUpAxis(temp_stage, UsdGeom.Tokens.y)
+        UsdGeom.SetStageUpAxis(temp_stage, UsdGeom.Tokens.z)
         UsdGeom.SetStageMetersPerUnit(temp_stage, 1.0)
         UsdPhysics.SetStageKilogramsPerUnit(temp_stage, 1.0)
         #import pdb; pdb.set_trace()

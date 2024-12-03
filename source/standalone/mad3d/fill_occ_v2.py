@@ -83,7 +83,9 @@ def find_occupied_voxels(grid):
 def fill_grid(path):
     hollow_occ = np.load(path)
     # x,y,z -> z,x,y
-    hollow_occ = np.where(hollow_occ==2, 1, 0)#.transpose((2, 0, 1))
+    # TODO: CHECK THIS
+    #hollow_occ = np.where(hollow_occ==2, 1, 0)#.transpose((2, 0, 1))
+    hollow_occ = np.where(hollow_occ==1, 1, 0)#.transpose((2, 0, 1))
     #print(hollow_occ[0])
     #exit()
     #print(hollow_occ.shape, np.sum(hollow_occ), hollow_occ[0, 0, 0])
@@ -148,7 +150,8 @@ def map_to_3d_grid(hollow_set, min_bound, max_bound, path):
 def save_face(scene_path, occ_set):
     hollow_occ = np.load(scene_path)
     # x,y,z -> z,x,y
-    hollow_occ = np.where(hollow_occ == 2, 1, 0)#.transpose((2, 0, 1))
+    #hollow_occ = np.where(hollow_occ == 2, 1, 0)#.transpose((2, 0, 1))
+    hollow_occ = np.where(hollow_occ == 1, 1, 0)#.transpose((2, 0, 1))
     
     X, Y, Z = hollow_occ.shape
     face_visibility = np.zeros((X, Y, Z, 6), dtype=bool)
@@ -174,7 +177,10 @@ def save_face(scene_path, occ_set):
 def vis_face_and_voxel(scene_path, face_vis):
     # Load the hollow_occ array
     hollow_occ = np.load(scene_path)
-    hollow_occ = np.where(hollow_occ == 2, 1, 0)
+    #hollow_occ = np.where(hollow_occ == 2, 1, 0)
+    hollow_occ = np.where(hollow_occ == 1, 1, 0)
+    
+    hollow_occ[:, :, 0] = 0
     
     X, Y, Z = hollow_occ.shape
     faces = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
@@ -189,7 +195,8 @@ def vis_face_and_voxel(scene_path, face_vis):
                     voxel_list.append([x, y, z])
                     for n, (dx, dy, dz) in enumerate(faces):
                         if face_vis[x, y, z, n]:
-                            normal_list.append([x + 0.5 * dx, y + 0.5 * dy, z + 0.5 * dz, dx, dy, dz])
+                            #normal_list.append([x + 0.5 * dx, y + 0.5 * dy, z + 0.5 * dz, dx, dy, dz])
+                            normal_list.append([x, y, z, dx, dy, dz])
     
     
     # Create Open3D voxel grid
@@ -208,8 +215,11 @@ def vis_face_and_voxel(scene_path, face_vis):
     colors = []
 
     for i, (px, py, pz, nx, ny, nz) in enumerate(normal_list):
+        px += 0.5
+        py += 0.5
+        pz += 0.5
         line_points.append([px, py, pz])
-        line_points.append([px + nx, py + ny, pz + nz])
+        line_points.append([px + nx*0.7, py + ny*0.7, pz + nz*0.7])
         lines.append([2 * i, 2 * i + 1])
         colors.append([1, 0, 0])  # red color for normals
 
@@ -218,7 +228,8 @@ def vis_face_and_voxel(scene_path, face_vis):
     line_set.colors = o3d.utility.Vector3dVector(colors)
     
     # Visualize using Open3D
-    o3d.visualization.draw_geometries([voxel_grid, line_set])
+    #o3d.visualization.draw_geometries([voxel_grid, line_set])
+    o3d.visualization.draw([voxel_grid, line_set])
 
 
 def main():
