@@ -381,7 +381,7 @@ class OnPolicyAlgorithmCus(BaseAlgorithm):
             with th.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, xyz, cov, real_actions, off = self.policy(obs_tensor)
+                actions, values, log_probs, xyz, cov, real_actions, off, height = self.policy(obs_tensor)
             actions = actions.cpu().numpy()
             if real_actions is not None:
                 real_actions = real_actions.cpu().numpy()

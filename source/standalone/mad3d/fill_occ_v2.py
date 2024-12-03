@@ -148,7 +148,7 @@ def map_to_3d_grid(hollow_set, min_bound, max_bound, path):
 def save_face(scene_path, occ_set):
     hollow_occ = np.load(scene_path)
     # x,y,z -> z,x,y
-    hollow_occ = np.where(hollow_occ == 2, 1, 0)#.transpose((2, 0, 1))
+    hollow_occ = np.where(hollow_occ == 2, 1, 0)
     
     X, Y, Z = hollow_occ.shape
     face_visibility = np.zeros((X, Y, Z, 6), dtype=bool)
@@ -229,10 +229,10 @@ def main():
     for scene_path in scenes_path:
         occ_set, z_len, x_len, y_len = fill_grid(scene_path)
         face_vis = save_face(scene_path, occ_set)
-        #vis_face_and_voxel(scene_path, face_vis) 
+        vis_face_and_voxel(scene_path, face_vis)
         hollow_set = convert_to_hollow(occ_set, min_bound=[0, 0, 0], max_bound=[x_len, y_len, z_len])
         map_to_3d_grid(hollow_set, [0, 0, 0], [x_len, y_len, z_len], scene_path)
-        #exit()
+        exit()
         #print(scene_path)
 
 if __name__=="__main__":

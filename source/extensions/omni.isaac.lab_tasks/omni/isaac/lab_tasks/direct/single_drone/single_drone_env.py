@@ -138,6 +138,7 @@ class QuadcopterEnv(DirectRLEnv):
         self.col = [False for i in range(self.cfg.num_envs)]
         self.not_free = [False for i in range(self.cfg.num_envs)]
         self.not_height = [False for i in range(self.cfg.num_envs)]
+        self.stuck = torch.tensor([0 for i in range(self.cfg.num_envs)], device=self.device)
 
         # x, y, z
         self.robot_pos = torch.zeros((self.cfg.num_envs, 3), device=self.device)
@@ -243,7 +244,7 @@ class QuadcopterEnv(DirectRLEnv):
             env_ids = torch.arange(self.cfg.num_envs)
             for i, scene in enumerate(scene_lists):
                 #TODO: chnage Occ to Occ_new_2000
-                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+                path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000")) #"Occ"))
                 occ_path = os.path.join(path, "fill_occ_set.pkl")
                 # To load the occupied voxels from the file
                 # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
@@ -259,6 +260,8 @@ class QuadcopterEnv(DirectRLEnv):
                 #print(torch.sum(self.gt_faces[env_ids[i]]), torch.sum(self.gt_occs[env_ids[i]]), torch.sum(self.gt_faces[env_ids[i]][self.gt_occs[env_ids[i]].bool()]))
 
                 # shift
+                #print(self.occs)
+                #print(occ_path)
                 self.occs[env_ids[i]] = shift_occs(self.occs[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
                 self.gt_occs[env_ids[i]] = shift_gt_occs(self.gt_occs[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
                 self.gt_faces[env_ids[i]] = shift_gt_faces(self.gt_faces[env_ids[i]], self.txyz[env_ids[i]], self.cfg.grid_size, self.cfg.env_size)
@@ -559,7 +562,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_newset_h20_auxoff_neg20', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_newset_h10limit_auxoff05', f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
                 #plt.imsave(os.path.join(root_path, f'{i}_mask_{self.env_step[i].long()}.png'),
                 #           (self.fg_masks[i].detach().cpu().numpy()*255).astype(np.uint8),
@@ -622,7 +625,7 @@ class QuadcopterEnv(DirectRLEnv):
                     break
                 if self.env_episode[i]%self.cfg.save_img_freq != 0:
                     continue
-                root_path = os.path.join('camera_image_newset_h20_auxoff_neg20', f'{self.env_episode[i]}')
+                root_path = os.path.join('camera_image_newset_h10limit_auxoff05', f'{self.env_episode[i]}')
                 
                 os.makedirs(root_path, exist_ok=True)
                 #print(f"save {i}_rgb_{self.env_step[i].long()}.png")
@@ -662,6 +665,26 @@ class QuadcopterEnv(DirectRLEnv):
             dim=1
         )
 
+        # Collect the last two obv_pose_history entries per environment, padding with zeros if necessary
+        """
+        pose_step_list = []
+        for i in range(self.cfg.num_envs):
+            env_step = int(self.env_step[i].item())  # Current step for the environment
+            
+            if env_step == 0:  # Only one step available
+                history = torch.cat([
+                    torch.zeros(1, self.obv_pose_history.shape[2], device=self.obv_pose_history.device),  # One zero row
+                    self.obv_pose_history[i, :1]  # First available step
+                ], dim=0)
+            else:  # Two or more steps available
+                history = self.obv_pose_history[i, max(0, env_step - 1):env_step + 1]  # Take last two steps
+
+            pose_step_list.append(history)
+        # Stack pose histories and reshape
+        pose_history_combined = torch.stack(pose_step_list).reshape(-1, 10)  # Shape [num_envs, 10]
+        # Concatenate pose_history_combined with h_limit_expanded
+        pose_step = torch.cat([pose_history_combined, h_limit_expanded], dim=1)  # Final shape [num_envs, 11]
+        """
         obs = {#"pose_step": pose_step,
                "pose_step": pose_step,
                #"img": self.obv_imgs.permute(0, 1, 4, 2, 3).reshape(-1, 3 * self.cfg.img_t, self.cfg.camera_h, self.cfg.camera_w),
@@ -730,9 +753,15 @@ class QuadcopterEnv(DirectRLEnv):
         }
         """
 
+        for i in range(self.cfg.num_envs):
+            if (self.face_ratio-self.last_face_ratio)[i]==0:
+                self.stuck[i] += 1
+            else:
+                self.stuck[i] = 0               
+        #print(torch.unique(self.stuck))
         rewards = {
             "face_ratio": (self.face_ratio-self.last_face_ratio) * self.cfg.occ_reward_scale * rew_mask,
-            "all_penalty": (1.0-all_mask)*-20, #-10.
+            "all_penalty": (1.0-all_mask)*-1, #-20.
         }
 
         for k in rewards.keys():
@@ -772,6 +801,8 @@ class QuadcopterEnv(DirectRLEnv):
         #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= 0.99)
         #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio_reward.squeeze() >= self.cfg.goal)
         done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.face_ratio.squeeze() >= self.cfg.goal)
+        # stuck
+        #done = torch.logical_or(done, self.stuck>=10)
         #done = self.env_step.to(self.device) >= self.cfg.total_img - 1
         #done = self.face_ratio.squeeze() >= self.cfg.goal
         
@@ -911,7 +942,8 @@ class QuadcopterEnv(DirectRLEnv):
         # only reset corresponding env
         self.grid.grid[env_ids] = 0 
                                 
-        
+        for env_id in env_ids:        
+            self.stuck[env_id] = 0
 
         if self.cfg.preplan:
             scenes_path = []
@@ -989,7 +1021,7 @@ class QuadcopterEnv(DirectRLEnv):
         # TODO DONT NEED THIS IF WE DO NOT CHANGE BUILDING
         for i, scene in enumerate(scene_lists):
             #TODO: chnage Occ to Occ_new_2000
-            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ"))
+            path, file = os.path.split(scene.replace("Raw_Rescale_USD", "Occ_new_2000")) #"Occ"))
             occ_path = os.path.join(path, "fill_occ_set.pkl")
             # To load the occupied voxels from the file
             # TODO NOTED THAT OCCS MAY HAVE BEEN SWAPPED
@@ -1159,8 +1191,8 @@ class QuadcopterEnv(DirectRLEnv):
                 yaw, pitch = compute_orientation(random_position, self.txyz[env_id].cpu().numpy())
                 # from initial h to max h
                 self.h_limit[env_id] = random.randint(int(random_position[2] * self.cfg.grid_size/self.cfg.env_size), 10)
-                if random.random() <= 1.0: # 0.8: 
-                    self.h_limit[env_id] = 20 #random.randint(9, 10)
+                if random.random() <= 0.9: 
+                    self.h_limit[env_id] = random.randint(9, 10)
                 # TODO: DO NOT NEED THIS FOR CONSTRAINT
                 # 50% chance to multiply yaw by -1
                 #if random.random() < 0.5:

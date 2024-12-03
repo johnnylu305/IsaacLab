@@ -61,6 +61,12 @@ def get_constraint_actions2(prob_grid, actions, h_limit, threshold=0.5, env_size
     for env in range(len(prob_grid)):
         # Set z positions above h_limit for this environment to False
         prob_grid[env, :, :, max(h_limit[env].ceil().int(), 1):] = 0.5
+        # only reset free voxel
+        #prob_grid[env, :, :, max(h_limit[env].ceil().int(), 1):] = th.where(
+        #        prob_grid[env, :, :, max(h_limit[env].ceil().int(), 1):] < 0.5,
+        #        th.tensor(0.5, dtype=prob_grid.dtype, device=prob_grid.device),
+        #        prob_grid[env, :, :, max(h_limit[env].ceil().int(), 1):])
+
 
     # Flatten prob_grid and create a free space mask
     prob_grid_flat = prob_grid.view(num_env, -1)
@@ -749,7 +755,7 @@ class ActorCriticPolicyCus(BasePolicy):
             #if isinstance(features, list):
             #    latent_pi, latent_vf = self.mlp_extractor(features[0])
             #else:
-            latent_pi, latent_vf, xyz, cov, off = self.mlp_extractor(features)
+            latent_pi, latent_vf, xyz, cov, off, height = self.mlp_extractor(features)
         else:
             pi_features, vf_features = features
             latent_pi = self.mlp_extractor.forward_actor(pi_features)
@@ -772,7 +778,7 @@ class ActorCriticPolicyCus(BasePolicy):
         #print(xyz.shape)
         #actions = th.cat([actions, xyz], dim=1)
         #print(actions.shape)
-        return actions, values, log_prob, xyz, cov, real_actions, off
+        return actions, values, log_prob, xyz, cov, real_actions, off, height
 
     def extract_features(  # type: ignore[override]
         self, obs: PyTorchObs, features_extractor: Optional[BaseFeaturesExtractor] = None
@@ -855,7 +861,7 @@ class ActorCriticPolicyCus(BasePolicy):
             #if isinstance(features, list):
             #    latent_pi, latent_vf = self.mlp_extractor(features[0])
             #else:
-            latent_pi, latent_vf, xyz, cov, off = self.mlp_extractor(features)
+            latent_pi, latent_vf, xyz, cov, off, height = self.mlp_extractor(features)
         else:
             pi_features, vf_features = features
             latent_pi = self.mlp_extractor.forward_actor(pi_features)
@@ -880,7 +886,7 @@ class ActorCriticPolicyCus(BasePolicy):
             #print("c", real_actions)
 
 
-        return values, log_prob, entropy, xyz, cov, off, gt_off
+        return values, log_prob, entropy, xyz, cov, off, gt_off, height, obs['pose_step'][:, 5]
 
     def get_distribution(self, obs: PyTorchObs) -> Distribution:
         """
@@ -1110,6 +1116,9 @@ class CusMlpExtractor(nn.Module):
         # offset net for auxiliary loss
         self.off_net = nn.Sequential(nn.Linear(feature_dim, 3)).to(device)
 
+        # height net for auxiliary loss
+        self.h_net = nn.Sequential(nn.Linear(feature_dim, 1), nn.Sigmoid()).to(device)
+
 
     def forward(self, features: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
         """
@@ -1120,7 +1129,7 @@ class CusMlpExtractor(nn.Module):
             xyz = features[1]
         else:
             xyz = None
-        return self.forward_actor(features), self.forward_critic(features), xyz, self.cov_net(features[0]), self.off_net(features[0])
+        return self.forward_actor(features), self.forward_critic(features), xyz, self.cov_net(features[0]), self.off_net(features[0]), self.h_net(features[0])
 
     def forward_actor(self, features: th.Tensor) -> th.Tensor:
         if isinstance(features, list):

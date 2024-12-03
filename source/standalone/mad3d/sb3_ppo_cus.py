@@ -203,6 +203,7 @@ class PPO_Cus(OnPolicyAlgorithmCus):
         entropy_losses = []
         aux_cov_losses = []
         aux_off_losses = []
+        aux_h_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
 
@@ -219,7 +220,7 @@ class PPO_Cus(OnPolicyAlgorithmCus):
                     actions = rollout_data.actions.long().flatten()
 
                 # take xyz and cov from new weight instead of rollout buffer
-                values, log_prob, entropy, xyz, cov, off, gt_off = self.policy.evaluate_actions(rollout_data.observations, actions)
+                values, log_prob, entropy, xyz, cov, off, gt_off, height, gt_height = self.policy.evaluate_actions(rollout_data.observations, actions)
                 values = values.flatten()
                 # Normalize advantage
                 advantages = rollout_data.advantages
@@ -282,7 +283,14 @@ class PPO_Cus(OnPolicyAlgorithmCus):
 
                 aux_off_losses.append(aux_off_loss.detach().cpu().numpy())
 
-                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss + aux_cov_loss*0 + aux_off_loss*1.0
+                #print(height, gt_height)
+                #aux_h_loss = th.mean(th.relu(height - gt_height)**2)
+                # TODO: bound height to 0-1
+                aux_h_loss = th.mean((height - gt_height/20.)**2)
+
+                aux_h_losses.append(aux_h_loss.detach().cpu().numpy())
+
+                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss + aux_cov_loss*0 + aux_off_loss*0.5 #+ aux_h_loss*0.01 #0.5
 
                 #print(aux_cov_loss, loss)
 
@@ -317,6 +325,7 @@ class PPO_Cus(OnPolicyAlgorithmCus):
         # Logs
         self.logger.record("train/aux_cov_loss", np.mean(aux_cov_losses))
         self.logger.record("train/aux_off_loss", np.mean(aux_off_losses))
+        self.logger.record("train/aux_h_loss", np.mean(aux_h_losses))
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))
