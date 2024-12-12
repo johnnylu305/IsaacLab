@@ -96,7 +96,7 @@ class RewardLoggingCallback(BaseCallback):
                         reward_type = key.split('/')[1]
                         if reward_type not in aggregated_rewards:
                             aggregated_rewards[reward_type] = []
-                        # Append the value to the list of the reward type
+                        # Append the value to the list of the reward
                         aggregated_rewards[reward_type].append(value.detach().cpu().item())
                     
                     # Aggregate "train_cus" values

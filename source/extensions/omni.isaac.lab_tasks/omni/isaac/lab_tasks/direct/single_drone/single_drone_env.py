@@ -63,7 +63,7 @@ from .utils import merge_point_clouds
 import re
 import csv
 import torch.nn.functional as F
-from .get_rescaled_depth import get_rescaled_depths
+#from .get_rescaled_depth import get_rescaled_depths
 
 cfg = RAY_CASTER_MARKER_CFG.replace(prim_path="/Visuals/CameraPointCloud")
 cfg.markers["hit"].radius = 0.002

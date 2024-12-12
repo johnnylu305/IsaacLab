@@ -62,7 +62,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     save_img_freq = 30 #10
     random_initial = True #False
     test = True
-    duster = True
+    duster = False
 
     num_envs = 2 # this might be overwrote by parser
     env_spacing = 60 #30 # in meter, 2 cells is one unit

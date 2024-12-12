@@ -90,8 +90,9 @@ def main():
         checkpoint_path = args_cli.checkpoint
     # create agent from stable baselines
     print(f"Loading checkpoint from: {checkpoint_path}")
-    agent = PPO.load(checkpoint_path, env, print_system_info=True)
-
+    #agent = PPO.load(checkpoint_path, env, print_system_info=True)
+    agent = PPO.load(checkpoint_path)
+    import pdb; pdb.set_trace()
     # reset environment
     obs = env.reset()
     # simulate environment
