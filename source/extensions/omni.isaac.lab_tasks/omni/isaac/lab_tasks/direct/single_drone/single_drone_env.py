@@ -318,7 +318,7 @@ class QuadcopterEnv(DirectRLEnv):
         self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
 
         used_yp = False #False
-        #self.used_nearest = True
+        self.used_nearest = False
         if self.used_nearest:
             #print(self._actions.shape)
             self.real_xyz = self._actions[:, 6:9]
