@@ -6,17 +6,20 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from scipy.spatial import cKDTree
 
+
 def load_hollow_occ(path):
     """
     Load the hollow occupancy grid from a .npy file.
     """
     return np.load(path)
 
+
 def occupancy_to_pointcloud(occ_grid):
     """
     Convert the 3D occupancy grid into a point cloud of occupied voxels.
     """
     return np.argwhere(occ_grid == 1)
+
 
 def generate_sphere_points_from_grid(occ_grid, thickness=1.0):
     """
@@ -42,6 +45,7 @@ def generate_sphere_points_from_grid(occ_grid, thickness=1.0):
 
     return np.array(sphere_points)
 
+
 def chamfer_distance(pcA, pcB):
     """
     Compute the Chamfer distance between two point clouds pcA and pcB.
@@ -55,6 +59,7 @@ def chamfer_distance(pcA, pcB):
     cd = np.mean(dist_A_to_B**2) + np.mean(dist_B_to_A**2)
     return cd
 
+
 def extract_features(point_cloud):
     """
     Extract features from the point cloud using PCA.
@@ -63,10 +68,40 @@ def extract_features(point_cloud):
     pca.fit(point_cloud)
     return pca.explained_variance_ratio_
 
+
+def split_train_test(selected_files, chamfer_distances, train_size, test_size, root_path):
+    """
+    Split the selected files into train and test sets based on explicit sizes.
+    """
+    if train_size + test_size != len(selected_files):
+        raise ValueError("Train size and test size must sum to the total number of selected shapes.")
+
+    train_files = selected_files[:train_size]
+    test_files = selected_files[train_size:train_size + test_size]
+    train_dists = chamfer_distances[:train_size]
+    test_dists = chamfer_distances[train_size:train_size + test_size]
+
+    train_output = os.path.join(root_path, "train.txt")
+    test_output = os.path.join(root_path, "test.txt")
+
+    with open(train_output, 'w') as f:
+        for file_path, cd in zip(train_files, train_dists):
+            f.write(f"{file_path} {cd:.6f}\n")
+
+    with open(test_output, 'w') as f:
+        for file_path, cd in zip(test_files, test_dists):
+            f.write(f"{file_path} {cd:.6f}\n")
+
+    print(f"Train set saved to: {train_output}")
+    print(f"Test set saved to: {test_output}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Select a diverse subset of shapes and compute Chamfer distances.")
     parser.add_argument("--root_path", type=str, required=True, help="Root directory containing hollow_occ.npy files.")
     parser.add_argument("--num_shapes", type=int, default=200, help="Number of shapes to select.")
+    parser.add_argument("--train_size", type=int, required=True, help="Number of shapes for the training set.")
+    parser.add_argument("--test_size", type=int, required=True, help="Number of shapes for the testing set.")
     args = parser.parse_args()
 
     # Find all hollow_occ.npy files
@@ -116,15 +151,11 @@ def main():
 
     # Sort selected files and distances by Chamfer distance
     sorted_data = sorted(zip(selected_files, chamfer_distances), key=lambda x: x[1])
+    selected_files, chamfer_distances = zip(*sorted_data)
 
-    # Save sorted file paths and Chamfer distances to the output file
-    output_file = os.path.join(args.root_path, f"selected_shapes_{num_clusters}.txt")
-    with open(output_file, 'w') as f:
-        for file_path, cd in sorted_data:
-            f.write(f"{file_path} {cd:.6f}\n")
+    # Split into train and test sets
+    split_train_test(selected_files, chamfer_distances, args.train_size, args.test_size, args.root_path)
 
-    print(f"Selected and sorted {len(sorted_data)} shapes. Paths and Chamfer distances saved to {output_file}")
 
 if __name__ == "__main__":
     main()
-

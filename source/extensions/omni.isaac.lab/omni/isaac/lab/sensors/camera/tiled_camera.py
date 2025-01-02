@@ -131,6 +131,8 @@ class TiledCamera(Camera):
             env_ids = slice(None)
         # reset the frame count
         self._frame[env_ids] = 0
+        # update pose
+        self._update_poses(env_ids)
 
     """
     Implementation.
@@ -234,6 +236,8 @@ class TiledCamera(Camera):
     def _update_buffers_impl(self, env_ids: Sequence[int]):
         # Increment frame count
         self._frame[env_ids] += 1
+        # update pose
+        self._update_poses(env_ids)
 
         # Extract the flattened image buffer
         for data_type, annotator in self._annotators.items():

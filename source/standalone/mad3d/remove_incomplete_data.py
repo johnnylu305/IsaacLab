@@ -8,7 +8,7 @@ parser = argparse.ArgumentParser(description="Script to remove invalid folders b
 
 # Add custom arguments
 parser.add_argument("--root_directory", type=str, required=True, help="Path to the root directory to process.")
-parser.add_argument("--mode", type=str, choices=["objaverse", "other"], required=True, help="Mode to specify the dataset type.")
+parser.add_argument("--mode", type=str, choices=["objaverse", "house3k", "other"], required=True, help="Mode to specify the dataset type.")
 
 # Import AppLauncher and append its CLI arguments
 from omni.isaac.lab.app import AppLauncher
@@ -23,6 +23,7 @@ simulation_app = app_launcher.app
 
 # Import additional modules after initializing the simulation app
 from pxr import Usd, UsdGeom, UsdPhysics, UsdUtils
+
 
 def remove_objaverse_invalid_folders(root_dir):
     count = 0
@@ -85,6 +86,77 @@ def remove_objaverse_invalid_folders(root_dir):
     print(count)
 
 
+def remove_house3k_invalid_folders(root_dir):
+    count = 0
+    # Iterate through batch folders (e.g., Batch_12)
+    for batch_folder in os.listdir(root_dir):
+        batch_folder_path = os.path.join(root_dir, batch_folder)
+        if not os.path.isdir(batch_folder_path):
+            continue
+        # Iterate through set folders (e.g., SetA)
+        for set_folder in os.listdir(batch_folder_path):
+            set_folder_path = os.path.join(batch_folder_path, set_folder)
+            if not os.path.isdir(set_folder_path):
+                continue
+            # Iterate through house folders (e.g., BAT12_SETA_HOUSE1)
+            for house_folder in os.listdir(set_folder_path):
+                house_folder_path = os.path.join(set_folder_path, house_folder)
+                if not os.path.isdir(house_folder_path):
+                    continue
+
+                nested_folder_path = os.path.join(house_folder_path, house_folder)  # Add nested folder
+                if not os.path.isdir(nested_folder_path):
+                    continue
+                
+                usd_file = os.path.join(nested_folder_path, f"{house_folder}.usd")
+                occ_file = os.path.join(nested_folder_path, "occ.npy")
+                print(occ_file)
+                # Condition 1: Missing .usd file
+                if not os.path.exists(usd_file):
+                    print(f"Removing {house_folder_path} due to missing .usd file")
+                    count += 1
+                    shutil.rmtree(house_folder_path)
+                    continue
+
+                # Condition 2: Missing occ.npy file
+                if not os.path.exists(occ_file):
+                    print(f"Removing {house_folder_path} due to missing occ.npy")
+                    count += 1
+                    shutil.rmtree(house_folder_path)
+                    continue
+
+                # Condition 3: Check if occupancy grid is empty
+                occ_grid = np.load(occ_file)
+                if np.sum(occ_grid[:, :, 1:]) == 0:
+                    print(f"Removing {house_folder_path} due to empty occupancy grid")
+                    count += 1
+                    shutil.rmtree(house_folder_path)
+                    continue
+
+                # Condition 4: Check for invalid nodes in USD file
+                try:
+                    stage = Usd.Stage.Open(usd_file)
+                    xform_prim = stage.GetDefaultPrim()
+                    geometry_prim = stage.GetPrimAtPath(f"/{xform_prim.GetName()}/geometry")
+
+                    if geometry_prim:
+                        invalid_nodes = [
+                            prim.GetPath().pathString for prim in geometry_prim.GetChildren()
+                            if prim.GetTypeName() not in ["Mesh", "Scope", "Material", "Shader"]
+                        ]
+                        if invalid_nodes:
+                            print(f"Removing {house_folder_path} due to invalid nodes: {invalid_nodes}")
+                            count += 1
+                            shutil.rmtree(house_folder_path)
+                            continue
+                except Exception as e:
+                    print(f"Error processing USD file {usd_file} in {house_folder_path}: {e}")
+                    count += 1
+                    shutil.rmtree(house_folder_path)
+                    continue
+    print(f"Total invalid folders removed: {count}")
+
+
 def get_all_mesh_prim_path(stage, root):
     root_prim = stage.GetPrimAtPath(root)
     stack = [root_prim]
@@ -98,12 +170,16 @@ def get_all_mesh_prim_path(stage, root):
         stack.extend(node.GetChildren())
     return mesh_prim_path
 
+
 def main():
     # Call the function only if mode is 'objaverse'
     if args_cli.mode == "objaverse":
         remove_objaverse_invalid_folders(args_cli.root_directory)
+    elif args_cli.mode == "house3k":
+        remove_house3k_invalid_folders(args_cli.root_directory)
     else:
         print("Mode 'other' is not implemented yet.")
+
 
 if __name__ == "__main__":
     main()

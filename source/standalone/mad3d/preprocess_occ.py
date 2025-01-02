@@ -114,12 +114,13 @@ def is_hollow(x, y, z, occ_set, grid_size):
     # Check if all surrounding voxels are occupied and within bounds
     for vx, vy, vz in surrounding_voxels:
         # if surrounding voxel is boundary voxel, then the target is surface
-        if not (0 <= vx < grid_size and
-                0 <= vy < grid_size and
-                0 <= vz < grid_size):
+        # except z = 0 which is floor
+        if (vx < 0 or vx >= grid_size or
+            vy < 0 or vy >= grid_size or
+            vz >= grid_size):
             return False
         # if surrounding voxel is empty voxel, then the target is surface
-        if (vx, vy, vz) not in occ_set:
+        if vz >=0 and (vx, vy, vz) not in occ_set:
             return False
     # Otherwise, the target is not surface voxel
     return True

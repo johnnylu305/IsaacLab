@@ -406,7 +406,8 @@ def rescale_scene(stage, outfile, scene_prim_root="/World/Scene", max_len=8, env
     transformed_vertices[:, 2] = vertices[:, 1]  # z = y
     transformed_vertices[:, 1] = -vertices[:, 2]  # y = -z
     o3d_mesh.vertices = o3d.utility.Vector3dVector(transformed_vertices)
-
+    
+    #o3d.visualization.draw([o3d_mesh])
     voxel_size = (env_size/grid_size)*VOXEL_SCALE # make the voxel resolution higher to create accurate occupancy grid
     voxel_grid = o3d.geometry.VoxelGrid.create_from_triangle_mesh(o3d_mesh, voxel_size)
     
