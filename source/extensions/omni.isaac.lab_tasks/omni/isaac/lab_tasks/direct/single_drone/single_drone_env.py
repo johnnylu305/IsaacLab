@@ -172,7 +172,7 @@ class MAD3DEnv(DirectRLEnv):
         # load paths for scenes
         # (usd_path, hollow_occ_path, fill_occ_set_path, faces_path, usdfilecfg)
         self.scene_paths = []
-        train_file = os.path.join(self.cfg.data_root, "preprocess", "train256.txt")
+        train_file = os.path.join(self.cfg.data_root, "preprocess", "train.txt")
         
         """
         self.files = []

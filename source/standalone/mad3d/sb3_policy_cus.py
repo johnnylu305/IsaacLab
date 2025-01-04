@@ -790,7 +790,7 @@ class ActorCriticPolicyCus(BasePolicy):
         actions = self.get_distribution(observation).get_actions(deterministic=deterministic)
         if self.constraint:
             actions = th.clip(actions, th.tensor(self.action_space.low, device=actions.device), th.tensor(self.action_space.high, device=actions.device))
-            prob_grid = obs["occ"][:, 0, :, :, :].clone()
+            prob_grid = observation["occ"][:, 0, :, :, :].clone()
             actions = get_constraint_actions(prob_grid, actions, obs["pose_step"][:, 5], threshold=0.5, env_size=obs["env_size"][0, 0])
 
     
