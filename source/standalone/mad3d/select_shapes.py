@@ -2,6 +2,7 @@ import os
 import glob
 import numpy as np
 import argparse
+import random
 from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from scipy.spatial import cKDTree
@@ -71,23 +72,36 @@ def extract_features(point_cloud):
 
 def split_train_test(selected_files, chamfer_distances, train_size, test_size, root_path):
     """
-    Split the selected files into train and test sets based on explicit sizes.
+    Split the selected files into train and test sets randomly but non-overlapping,
+    and keep the original order when saving.
     """
     if train_size + test_size != len(selected_files):
         raise ValueError("Train size and test size must sum to the total number of selected shapes.")
 
-    train_files = selected_files[:train_size]
-    test_files = selected_files[train_size:train_size + test_size]
-    train_dists = chamfer_distances[:train_size]
-    test_dists = chamfer_distances[train_size:train_size + test_size]
+    # Generate indices and shuffle them
+    indices = list(range(len(selected_files)))
+    random.shuffle(indices)
 
+    # Split shuffled indices into train and test sets
+    train_indices = sorted(indices[:train_size])  # Sort to preserve order when saving
+    test_indices = sorted(indices[train_size:train_size + test_size])  # Sort to preserve order when saving
+
+    # Create train and test splits
+    train_files = [selected_files[i] for i in train_indices]
+    test_files = [selected_files[i] for i in test_indices]
+    train_dists = [chamfer_distances[i] for i in train_indices]
+    test_dists = [chamfer_distances[i] for i in test_indices]
+
+    # Output file paths
     train_output = os.path.join(root_path, "train.txt")
     test_output = os.path.join(root_path, "test.txt")
 
+    # Save train set
     with open(train_output, 'w') as f:
         for file_path, cd in zip(train_files, train_dists):
             f.write(f"{file_path} {cd:.6f}\n")
 
+    # Save test set
     with open(test_output, 'w') as f:
         for file_path, cd in zip(test_files, test_dists):
             f.write(f"{file_path} {cd:.6f}\n")

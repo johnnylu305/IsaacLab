@@ -15,10 +15,10 @@ from omni.isaac.lab.sensors import TiledCamera, TiledCameraCfg
 
 # env
 GRID_SIZE = 20
-ENV_SIZE = 10 #20
+ENV_SIZE = 20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_256rand_newproposalnetdetach_normface'
+CAMERA_FOLDER = 'camera_image_envsize20_256rand_ojba'
 
 
 # define crazyflie
@@ -61,7 +61,7 @@ CRAZYFLIE_CFG = ArticulationCfg(
 class MAD3DEnvCfg(DirectRLEnvCfg):
 
     # data
-    data_root = os.path.join(os.path.abspath(os.sep), "home", "dsr", "Documents", "mad3d", "New_Dataset20", "house3k")
+    data_root = os.path.join(os.path.abspath(os.sep), "home", "dsr", "Documents", "mad3d", "New_Dataset20", "objaverse")
     camera_folder = CAMERA_FOLDER
 
     # env

@@ -56,7 +56,7 @@ from omni.isaac.lab.utils.dict import print_dict
 # normalize the max side of the 3D shape to max_len
 MAX_LEN = 8
 # env and grid size
-ENV_SIZE = 10
+ENV_SIZE = 20 #10
 GRID_SIZE = 20
 
 
@@ -123,9 +123,10 @@ def main():
     for ext in extensions:
         meshes_path.extend(glob.glob(os.path.join(args_cli.input, '**', ext), recursive=True))
 
+    start = 0
     # start conversion 3D model (glb, obj, fbx) to rescaled, shifted usd and occupancy grid (occ.npy)
-    for i, mesh_path in enumerate(meshes_path):
-        print(i)
+    for i, mesh_path in enumerate(meshes_path[start:]):
+        print(i+start)
         relative_path = os.path.relpath(mesh_path, args_cli.input)
         dest_path = os.path.join(args_cli.output, relative_path)
         # save path
