@@ -136,6 +136,26 @@ class RewardLoggingCallback(BaseCallback):
         self.writer.close()
 
 
+def piecewise_step_lr_schedule(lr_list, step_list, total_timesteps):
+    # Basic checks for consistency
+    if len(lr_list) != len(step_list):
+        raise ValueError("lr_list and step_list must have the same length.")
+    if sorted(step_list) != step_list:
+        raise ValueError("step_list must be sorted in ascending order.")
+
+    def func(progress_remaining):
+        # Calculate the current training step based on progress_remaining
+        current_step = int((1 - progress_remaining) * total_timesteps)
+
+        for i, boundary in enumerate(step_list):
+            if current_step <= boundary:
+                return lr_list[i]
+        # If current_step >= the last boundary, use the last LR
+        return lr_list[-1]
+
+    return func
+
+
 @hydra_task_config(args_cli.task, "sb3_cfg_entry_point")
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: dict):
     """Train with stable-baselines agent."""
@@ -185,6 +205,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             gamma=agent_cfg["gamma"],
             clip_reward=np.inf,
         )
+
+    # lr schedule
+    lr = 3e-4
+    agent_cfg["learning_rate"] = piecewise_step_lr_schedule(lr_list=[lr, lr/2., lr/4., lr/8.], step_list=[1500000, 2000000, 2500000, 6000000], total_timesteps=n_timesteps)
+
 
     agent = PPO_Cus(policy_arch, env, verbose=1, **agent_cfg)
     new_logger = configure(log_dir, ["stdout", "tensorboard"])
