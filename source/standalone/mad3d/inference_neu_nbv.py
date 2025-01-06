@@ -1047,8 +1047,38 @@ def run_simulator(sim, scene_entities, output, scene_path):
 
             
 def main():
-    scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*[!_non_metric].usd'), recursive=True))
+    #scenes_path = sorted(glob.glob(os.path.join(args_cli.input, '**', '*[!_non_metric].usd'), recursive=True))
     #scenes_path = scenes_path[:1]
+    
+    # Define the input file
+    input_file = args_cli.input
+    
+    scene_paths = []
+    with open(input_file, "r") as file:
+        for line in file:
+        #for line in self.files:
+            # Strip newline and split by space
+            line = line.strip()
+            if line:  # Ignore empty lines
+                *path_parts, _ = line.rsplit(maxsplit=1)  # Split by spaces, last part is the value
+                hollow_occ_path = " ".join(path_parts)  # Recombine the path parts with spaces
+
+                # Check if the path is a hollow_occ.npy
+                if hollow_occ_path.endswith("hollow_occ.npy"):
+                    directory = os.path.dirname(hollow_occ_path)  # Extract directory from the path
+
+                    # Search for the corresponding `.usd` file
+                    usd_files = glob.glob(os.path.join(directory, "*.usd"))
+                    usd_files = [file for file in usd_files if "non_metric" not in file]
+
+                    # Search for `faces.npy` and `fill_occ_set.pkl` in the same directory
+                    faces_path = os.path.join(directory, "faces.npy")
+                    fill_occ_set_path = os.path.join(directory, "fill_occ_set.pkl")
+
+                    # Ensure the required files exist
+                    if usd_files and os.path.exists(faces_path) and os.path.exists(fill_occ_set_path):
+                        #scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, UsdFileCfg(usd_path=usd_files[0])))
+                        scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path))
 
     world = World(stage_units_in_meters=1.0, backend='torch', device='cpu')
     stage = world.scene.stage
