@@ -87,6 +87,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     # sensor
     # TODO FIX OFFSET
     camera_offset = [0.5, 0.0, 0.0]
+    #camera_w, camera_h = 84, 84 
     camera_w, camera_h = 300, 300 # try 400 x 400 in the future
     #camera_w, camera_h = 1000, 1000 # try 400 x 400 in the future
 

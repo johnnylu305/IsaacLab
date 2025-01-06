@@ -32,7 +32,7 @@ import torch
 import os
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
-from stable_baselines3 import PPO
+from stable_baselines3 import PPO, DDPG
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.logger import configure
 from omni.isaac.lab.utils.io import dump_pickle, dump_yaml
@@ -111,6 +111,7 @@ def main():
 
     # create agent from stable baselines
     agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
+    #agent = DDPG(policy_arch, env, verbose=1, **agent_cfg)
     #print(agent.policy)
     #exit()
     # configure the logger

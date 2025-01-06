@@ -57,6 +57,7 @@ def process_sb3_cfg(cfg: dict) -> dict:
             else:
                 if key in ["policy_kwargs", "replay_buffer_class", "replay_buffer_kwargs"]:
                     hyperparams[key] = eval(value)
+               
                 elif key in ["learning_rate", "clip_range", "clip_range_vf", "delta_std"]:
                     if isinstance(value, str):
                         _, initial_value = value.split("_")
