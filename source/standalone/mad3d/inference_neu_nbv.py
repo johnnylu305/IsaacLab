@@ -857,14 +857,14 @@ def run_simulator(sim, scene_entities, output, scene_path):
         sim.step()
         camera.update(dt=sim.get_physics_dt())
 
-    image0 = camera.data.output["rgb"][0].transpose(0,2)
+    image0 = camera.data.output["rgb"][0].transpose(0,2).clone()
     
-    camera.set_world_poses_from_view(torch.tensor([20,0,0]).unsqueeze(0).float(), torch.tensor([0,0,2]).unsqueeze(0).float())
+    camera.set_world_poses_from_view(torch.tensor([20,0,0]).unsqueeze(0).float(), torch.tensor([0,0,10]).unsqueeze(0).float())
     for i in range(10):
         sim.step()
         camera.update(dt=sim.get_physics_dt())
 
-    image1 = camera.data.output["rgb"][0].transpose(0,2)
+    image1 = camera.data.output["rgb"][0].transpose(0,2).clone()
     
     images = torch.zeros((3,3,camera_w, camera_h))
     images[0] = image0
@@ -893,12 +893,12 @@ def run_simulator(sim, scene_entities, output, scene_path):
         view.append(local)
     poses = view_to_pose_batch(np.array(view), env_size)
     #poses = torch.tensor(poses).cuda().float()
-    plot_pose_matrices_larger_view(poses)
+    #plot_pose_matrices_larger_view(poses)
     poses = torch.tensor(poses).cuda().float()
     image_queue = deque()
     image_queue.append(images[0])
     image_queue.append(images[1])
-    
+    os.makedirs(f'neu_nbv_save/{file}', exist_ok=True)
     occ_ratio_list = []
     for step in range(num_steps):
         # Step simulation
@@ -921,17 +921,29 @@ def run_simulator(sim, scene_entities, output, scene_path):
         depth_image=camera.data.output["distance_to_image_plane"].clone()
         current_pose = to_transformation_matrix(camera_pos.squeeze(), camera_quat.squeeze()).float()
         
+        #new_pose = pos_quat_to_transformation_matrix(camera_pos, camera_quat)
+        view = []
+        for i in range(50):
+            local = random_view(camera_pos[0].cpu().numpy(), env_size, 0.15, 0.2, 1.05)
+            view.append(local)
+        poses = view_to_pose_batch(np.array(view), env_size)
+        poses = torch.tensor(poses).float()
         # prevent inf
         depth_image = torch.clamp(depth_image, 0, 20*2)
         points_3d_cam = unproject_depth(depth_image, intrinsic_matrix)
         points_3d_world = transform_points(points_3d_cam, camera_pos, camera_quat)
+        for i in range(10):
+            sim.step()
+            camera.update(dt=sim.get_physics_dt()) 
+        new_image = camera.data.output["rgb"][0].transpose(0,2).clone()
         
-        new_image = camera.data.output["rgb"][0].transpose(0,2)
-        plt.imsave('test.png',new_image.transpose(0,2).cpu().numpy())
+        plt.imsave('neu_nbv_save/{}/step_{}.png'.format(file,step) ,new_image.transpose(0,2).cpu().numpy())
         #images[2] = new_image
         image_queue.append(new_image)
-        #image_queue.popleft()
-        images = np.array(image_queue)
+        image_queue.popleft()
+        images = np.array(image_queue)/255
+        #import pdb; pdb.set_trace()
+        #images = np.load("source/standalone/mad3d/neu_nbv_images.npy")
         images = torch.tensor(images).cuda().float()
         
         #transformations_within_radius = find_transformations_within_radius(new_pose, poses.cpu().numpy(), angle_radius)
@@ -960,7 +972,7 @@ def run_simulator(sim, scene_entities, output, scene_path):
         #_coord_trans_normal_2_opencv = torch.tensor([[0, 0, 1, 0], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]], dtype=torch.float32)
 
         #new_pose = torch.tensor(new_pose.cpu(), dtype=torch.float32) @ _coord_trans_normal_2_opencv 
-        plot_pose_matrices_larger_view(torch.tensor(new_pose).unsqueeze(0).cpu().numpy())
+        #plot_pose_matrices_larger_view(torch.tensor(new_pose).unsqueeze(0).cpu().numpy())
         
         position, quaternion = pose_to_position_quaternion(torch.tensor(new_pose))
         
@@ -1010,9 +1022,9 @@ def run_simulator(sim, scene_entities, output, scene_path):
             # Append to CSV file
             with open(file_name, mode='a', newline='') as file:
                 writer = csv.writer(file)
-                if file.tell() == 0:  # Check if the file is empty to write the header
-                    writer.writerow(['occ_ratio'])  # Header row
-                writer.writerows([[ratio] for ratio in occ_ratio_list])  # Data rows
+                #if file.tell() == 0:  # Check if the file is empty to write the header
+                #    writer.writerow(scene_path)  # Header row
+                writer.writerows([[scene_path] + occ_ratio_list])  # Data rows
 
             print(f"occ_ratio_list has been appended to {file_name}")
 

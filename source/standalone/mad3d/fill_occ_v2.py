@@ -218,7 +218,7 @@ def vis_face_and_voxel(scene_path, face_vis):
     line_set.colors = o3d.utility.Vector3dVector(colors)
     
     # Visualize using Open3D
-    o3d.visualization.draw_geometries([voxel_grid, line_set])
+    o3d.visualization.draw([voxel_grid, line_set])
 
 
 def main():
