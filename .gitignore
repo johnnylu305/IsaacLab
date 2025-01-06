@@ -4,7 +4,7 @@ camera_image
 
 **/*.png
 **/*.pyc
-
+**/*.npz
 ## C++
 **/cmake-build*/
 **/build*/
