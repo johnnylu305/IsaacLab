@@ -1,4 +1,4 @@
-# Copyrigh/t (c) 2022-2024, The Isaac Lab Project Developers.
+# Copyright (c) 2022-2024, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
@@ -512,6 +512,7 @@ class MAD3DEnv(DirectRLEnv):
 
         center = compute_weighted_centroid(occ_face[:, :, :, 1:, 4:], self.gt_faces[:, :, :, 1:, :])
         center /= occ_face.shape[1]
+
 
         obs = {"pose_step": pose_step,
                "img": gray_scale_img.reshape(-1, 1, self.cfg.camera_h, self.cfg.camera_w),

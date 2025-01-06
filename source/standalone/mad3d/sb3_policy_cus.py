@@ -302,6 +302,7 @@ class BaseModel(nn.Module):
             and whether the observation is vectorized or not
         """
         vectorized_env = False
+        
         if isinstance(observation, dict):
             assert isinstance(
                 self.observation_space, spaces.Dict
@@ -313,7 +314,7 @@ class BaseModel(nn.Module):
                 if is_image_space(obs_space):
                     obs_ = maybe_transpose(obs, obs_space)
                 else:
-                    obs_ = np.array(obs)
+                    obs_ = np.array(obs.cpu())
                 vectorized_env = vectorized_env or is_vectorized_observation(obs_, obs_space)
                 # Add batch dimension if needed
                 observation[key] = obs_.reshape((-1, *self.observation_space[key].shape))  # type: ignore[misc]
@@ -420,7 +421,7 @@ class BasePolicy(BaseModel, ABC):
                 "See related issue https://github.com/DLR-RM/stable-baselines3/issues/1694 "
                 "and documentation for more information: https://stable-baselines3.readthedocs.io/en/master/guide/vec_envs.html#vecenv-api-vs-gym-api"
             )
-
+        
         obs_tensor, vectorized_env = self.obs_to_tensor(observation)
 
         with th.no_grad():
@@ -787,14 +788,91 @@ class ActorCriticPolicyCus(BasePolicy):
         :param deterministic: Whether to use stochastic or deterministic actions
         :return: Taken action according to the policy
         """
-        actions = self.get_distribution(observation).get_actions(deterministic=deterministic)
-        if self.constraint:
-            actions = th.clip(actions, th.tensor(self.action_space.low, device=actions.device), th.tensor(self.action_space.high, device=actions.device))
-            prob_grid = obs["occ"][:, 0, :, :, :].clone()
-            actions = get_constraint_actions(prob_grid, actions, obs["pose_step"][:, 5], threshold=0.5, env_size=obs["env_size"][0, 0])
+        # Preprocess the observation if needed
+        features = self.extract_features(observation)
+        latent_pi, latent_vf, xyz, off = self.mlp_extractor(features)
+        distribution = self._get_action_dist_from_latent(latent_pi)
 
-    
-        return actions
+        # constraint actions to the nearest actions if needed
+        real_actions = None
+        gt_off = None
+        if self.constraint:
+            actions = distribution.get_actions(deterministic=deterministic).detach()
+            actions = actions.reshape((-1, *self.action_space.shape))  # type: ignore[misc]
+            actions = th.clip(actions, th.tensor(self.action_space.low, device=actions.device), th.tensor(self.action_space.high, device=actions.device))
+            prob_grid = observation["occ"][:, 0, :, :, :].clone()
+            real_actions = actions
+            actions = get_constraint_actions(prob_grid, actions, observation["pose_step"][:, 5], threshold=0.5, env_size=observation["env_size"][0, 0]).detach()
+
+        return actions, xyz, real_actions
+
+    # overwrite original predict
+    def predict(
+        self,
+        observation: Union[np.ndarray, Dict[str, np.ndarray]],
+        state: Optional[Tuple[np.ndarray, ...]] = None,
+        episode_start: Optional[np.ndarray] = None,
+        deterministic: bool = False,
+    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
+        """
+        Get the policy action from an observation (and optional hidden state).
+        Includes sugar-coating to handle different observations (e.g. normalizing images).
+
+        :param observation: the input observation
+        :param state: The last hidden states (can be None, used in recurrent policies)
+        :param episode_start: The last masks (can be None, used in recurrent policies)
+            this correspond to beginning of episodes,
+            where the hidden states of the RNN must be reset.
+        :param deterministic: Whether or not to return deterministic actions.
+        :return: the model's action and the next hidden state
+            (used in recurrent policies)
+        """
+        # Switch to eval mode (this affects batch norm / dropout)
+        self.set_training_mode(False)
+
+        # Check for common mistake that the user does not mix Gym/VecEnv API
+        # Tuple obs are not supported by SB3, so we can safely do that check
+        if isinstance(observation, tuple) and len(observation) == 2 and isinstance(observation[1], dict):
+            raise ValueError(
+                "You have passed a tuple to the predict() function instead of a Numpy array or a Dict. "
+                "You are probably mixing Gym API with SB3 VecEnv API: `obs, info = env.reset()` (Gym) "
+                "vs `obs = vec_env.reset()` (SB3 VecEnv). "
+                "See related issue https://github.com/DLR-RM/stable-baselines3/issues/1694 "
+                "and documentation for more information: https://stable-baselines3.readthedocs.io/en/master/guide/vec_envs.html#vecenv-api-vs-gym-api"
+            )
+        
+        obs_tensor, vectorized_env = self.obs_to_tensor(observation)
+
+        with th.no_grad():
+            actions, xyz, real_actions = self._predict(obs_tensor, deterministic=deterministic)
+        
+        # Convert to numpy, and reshape to the original action shape
+        actions = actions.cpu().numpy().reshape((-1, *self.action_space.shape))  # type: ignore[misc, assignment]
+
+        if real_actions is not None:
+            real_actions = real_actions.cpu().numpy()
+        xyz = xyz.cpu().numpy()
+
+        if isinstance(self.action_space, spaces.Box):
+            if self.squash_output:
+                # Rescale to proper domain when using squashing
+                actions = self.unscale_action(actions)  # type: ignore[assignment, arg-type]
+            else:
+                # Actions could be on arbitrary scale, so clip the actions to avoid
+                # out of bound error (e.g. if sampling from a Gaussian distribution)
+                actions = np.clip(actions, self.action_space.low, self.action_space.high)  # type: ignore[assignment, arg-type]
+
+        if real_actions is not None:
+            actions_with_xyz = np.concatenate([actions, xyz, real_actions], axis=1)
+        else:
+            actions_with_xyz = np.concatenate([actions, xyz], axis=1)
+
+        # Remove batch dimension if needed
+        if not vectorized_env:
+            assert isinstance(actions, np.ndarray)
+            actions = actions.squeeze(axis=0)
+
+        return actions_with_xyz, state  # type: ignore[return-value]
 
     def evaluate_actions(self, obs: PyTorchObs, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, Optional[th.Tensor]]:
         """
