@@ -18,7 +18,7 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_30000rand_obja_lrsch'
+CAMERA_FOLDER = 'camera_image_envsize20_30000rand_obja_lrsch_dilatednearest'
 
 
 # define crazyflie
