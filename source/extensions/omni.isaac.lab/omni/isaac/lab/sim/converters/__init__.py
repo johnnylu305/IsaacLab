@@ -25,3 +25,4 @@ from .urdf_converter_cfg import UrdfConverterCfg
 # user add
 from .mesh_converter_mad3d import MeshConverterMAD3D
 from .mesh_converter_rescale_mad3d import MeshConverterRescaleMAD3D
+from .mesh_converter_pointcloud import MeshConverterMAD3DPointCloud

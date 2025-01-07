@@ -258,13 +258,13 @@ class QuadcopterEnv(DirectRLEnv):
         #self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
         self._azimuth = self._actions[:,0]*2.*torch.pi # horizontal angle
         self._elevation = self._actions[:,1]*0.5*torch.pi # for upper hemisphere only
-        self._distance = self._actions[:,2]*(self.cfg.env_size)
+        self._distance = self._actions[:,2]
         x = self._distance * torch.cos(self._elevation) * torch.cos(self._azimuth)
         y = self._distance * torch.cos(self._elevation) * torch.sin(self._azimuth)
         z = self._distance * torch.sin(self._elevation)
-        self._xyz = torch.cat([x, y, z],dim=1) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
+        self._xyz = torch.cat([x.unsqueeze(1), y.unsqueeze(1), z.unsqueeze(1)],dim=1) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
         print(self._xyz) 
-        import pdb; pdb.set_trace() 
+        #import pdb; pdb.set_trace() 
         hard_occ = torch.where(self.obv_occ[:, :, :, 1:, 0] >= 0.6, 1, 0)
         num_match_occ = torch.sum(torch.logical_and(hard_occ, self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
         total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
@@ -283,8 +283,8 @@ class QuadcopterEnv(DirectRLEnv):
             
         else:
             target_position = self._xyz
-            yaw, pitch = compute_orientation(target_position) #assume the camera look at (0,0,0)
-            
+            yaw, pitch = compute_orientation(target_position.cpu().numpy()) #assume the camera look at (0,0,0)
+            import pdb; pdb.set_trace() 
             target_orientation = rot_utils.euler_angles_to_quats(np.array([0, 0, yaw]), degrees=False)
             target_position = torch.from_numpy(target_position).unsqueeze(0).to(self.device)
             target_orientation = torch.from_numpy(target_orientation).unsqueeze(0)
