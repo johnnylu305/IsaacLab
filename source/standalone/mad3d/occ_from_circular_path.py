@@ -214,14 +214,14 @@ def main():
     # start scan the shapes
     for i, scene_path in enumerate(scenes_path):
         print(f"{i}: {scene_path}")
+    
         # setup ground, light, and camera
         scene_entities = setup_scene(world, scene_path)
 
         # output dir
         output_dir = os.path.dirname(scene_path)
-
-        # run simulation (capture)
         world.reset()
+        # run simulation (capture)
         run_simulator(world, scene_entities, output_dir)
         world.clear()
 

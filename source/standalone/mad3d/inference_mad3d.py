@@ -33,16 +33,18 @@ from omni.isaac.lab.utils.math import transform_points, unproject_depth
 from omni.isaac.core.utils.viewports import set_camera_view
 from omni.kit.viewport.utility import get_active_viewport, capture_viewport_to_file
 from pxr import Sdf, UsdLux, UsdGeom, Gf, Usd
-from PIL import Image
 import omni.isaac.core.utils.numpy.rotations as rot_utils
 from omni.isaac.lab.utils.math import convert_camera_frame_orientation_convention, euler_xyz_from_quat
 
-#from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import VecNormalize
+
+import matplotlib.pyplot as plt
 import sys
+from PIL import Image
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import VecNormalize
 sys.path.append("/home/hat/Documents/IsaacLab")
 from sb3_ppo_cus import PPO_Cus
-import matplotlib.pyplot as plt
+
 
 # Env
 num_steps = 20
@@ -51,9 +53,9 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 CAMERA_WIDTH = 300
 CAMERA_HEIGHT = 300
-camera_offset = [0.1, 0.0, 0.0]
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Sensor
+camera_offset = [0.1, 0, 0]
+# Sensor"
 CameraCfg = CameraCfg(
     prim_path="/World/Camera",
     offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
@@ -68,6 +70,7 @@ CameraCfg = CameraCfg(
     width=CAMERA_WIDTH,
     height=CAMERA_HEIGHT,
 )
+
 
 
 class OccupancyGrid:
@@ -104,6 +107,9 @@ def setup_scene(world, scene_path, scene_prim_root="/World/Scene"):
     world.scene.add(scene_prim)
     
     scene_entities = {}
+    
+
+
     scene_entities["camera"] = Camera(CameraCfg)
 
     return scene_entities
@@ -178,7 +184,7 @@ def run_simulator(sim, scene_entities, output, agent, hollow_occ_path, coverage_
     # initial pose
     target_position = torch.tensor([[x, y, z]], dtype=torch.float32)
     # look at (0, 0, 2)
-    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))
+    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))#, env_ids=[0])
     pose = torch.tensor([[x, y, z, 0, 0]]).to(DEVICE)
 
     occ_gt = torch.tensor(np.load(hollow_occ_path))
@@ -521,21 +527,36 @@ def main():
     # user viewport
     set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
     agent = make_env()
-
+    import time
     # start scan the shapes
     for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path) in enumerate(scene_paths):
+        # world initialization
+        world = World(stage_units_in_meters=1.0, backend="torch", device="cpu")
+        # user viewport
+        set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
         print(f"{i}: {scene_path}")
         # setup ground, light, and camera
         scene_entities = setup_scene(world, scene_path)
 
         # output dir
         output_dir = os.path.dirname(scene_path)
-
+        #if i >= 1:
+        #    exit()       
         # run simulation (capture)
+        print("@@@@@@@@@@@@@@@@@@@")
+        time.sleep(1)
+        #if i==0:
         world.reset()
+        print("vvvvvvvvvvvvvvv")
+        time.sleep(1)
+        #if i >= 1:
+        #    exit()
         run_simulator(world, scene_entities, output_dir, agent, hollow_occ_path, coverage_ratio_avg, i)
+        scene_entities["camera"].__del__()
         world.clear()
-
+        #del scene_entities["camera"] 
+        #if i >= 1:
+        #    exit()
 
 if __name__ == "__main__":
     main()
