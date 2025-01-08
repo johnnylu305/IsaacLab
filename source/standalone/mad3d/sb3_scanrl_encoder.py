@@ -63,7 +63,7 @@ class ProposalNet(nn.Module):
         
         # [CHANGE #1] Instead of a single fc1 -> xyz with sigmoid,
         # we define two separate linear layers for mean and log_std:
-        self.fc_mean = nn.Linear(flattened_size, 3)  # Mean of xyz
+        self.fc_mean = nn.Linear(flattened_size, 256)  # Mean of xyz
         #self.fc_log_std = nn.Linear(flattened_size, 3)  # Log std of xyz
         self.log_std = nn.Parameter(th.ones(3) * 1, requires_grad=True)
 
@@ -80,16 +80,16 @@ class ProposalNet(nn.Module):
         # [CHANGE #1 continued] Sample xyz from Gaussian distribution
         mean = self.fc_mean(x)
         #log_std = self.fc_log_std(x)
-        std = torch.exp(self.log_std)  
-        eps = torch.randn_like(std)
-        xyz = mean + std * eps  # Reparameterization trick
+        #std = torch.exp(self.log_std)  
+        #eps = torch.randn_like(std)
+        #xyz = mean + std * eps  # Reparameterization trick
 
         # (Optional) If you need xyz in [0,1], do something like:
-        xyz = torch.sigmoid(xyz)
+        #xyz = torch.sigmoid(xyz)
         #xyzmean = torch.sigmoid(mean)
         #xyz = torch.tanh(xyz)
 
-        return xyz#, xyzmean, self.log_std
+        return mean#, xyzmean, self.log_std
 
 
 class ViewEncoder(nn.Module):
@@ -172,7 +172,7 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
                                                 nn.BatchNorm2d(12),  # Add BatchNorm
                                                 nn.LeakyReLU(),   # Second ReLU activation
                                                 nn.Flatten(),  # Flatten the output to feed into linear layer
-                                                nn.Linear(in_features=15552, out_features=256), # Linear layer to 256 units
+                                                nn.Linear(in_features=972, out_features=256), # Linear layer to 256 units
                                                 nn.LeakyReLU(),   # Second ReLU activation
                                             )
                 total_concat_size += 256
@@ -197,17 +197,18 @@ class CustomCombinedExtractor(BaseFeaturesExtractor):
     def forward(self, observations) -> th.Tensor:
         #encoded_tensor_list = []
         for key, extractor in self.extractors.items():
-            if "occ_pro" == key:
-                xyz = self.extractors["occ_pro"](observations["occ"])
-                #out = self.extractors["occ_view"](observations["occ"], xyz.detach())
-                #encoded_tensor_list.append(out)
-            elif "occ" in key:
-                pass
+            if "img" == key:
+                xyz = self.extractors["img"](observations["img"])
+            #elif "occ_pro" == key:
+            #    xyz = self.extractors["occ_pro"](observations["occ"])
+            #    #out = self.extractors["occ_view"](observations["occ"], xyz.detach())
+            #    #encoded_tensor_list.append(out)
+            #elif "occ" in key:
+            #    pass
             #else:
             #    encoded_tensor_list.append(extractor(observations[key]))
         
         #out = th.cat(encoded_tensor_list, dim=1)
         #out = self.fuse(out)
 
-        #return [out, xyz]
         return xyz

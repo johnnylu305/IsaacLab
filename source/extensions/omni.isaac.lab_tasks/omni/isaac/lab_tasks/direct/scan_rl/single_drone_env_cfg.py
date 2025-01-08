@@ -18,7 +18,7 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_256rand_ojba'
+CAMERA_FOLDER = 'camera_image_envsize20_scanrl_house3k'
 
 
 # define crazyflie
@@ -101,7 +101,7 @@ class SCANRLEnvCfg(DirectRLEnvCfg):
     # sensor
     # TODO: tune offset?
     camera_offset = [0.1, 0.0, 0.0]
-    camera_w, camera_h = 300, 300
+    camera_w, camera_h = 84, 84
 
     # obv
     # these are placeholder

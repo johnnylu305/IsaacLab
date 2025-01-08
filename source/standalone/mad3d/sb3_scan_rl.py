@@ -78,7 +78,7 @@ class RewardLoggingCallback(BaseCallback):
 
         aggregated_rewards = {}
         aggregated_train_cus = {}
-
+        '''
         # Loop through each environment's info and aggregate data
         for info in infos:
             episode_info = info.get('episode', None)
@@ -115,7 +115,7 @@ class RewardLoggingCallback(BaseCallback):
             # Log each value with its adjusted step
             for v, step in values:
                 self.writer.add_scalar(f"Aggregated train_cus/{train_cus_type}", v, step)
-
+        
         if self.num_timesteps % self.freq == 0:
             try:
                 x_s, y_s, z_s, pitch_s, yaw_s = torch.exp(self.model.policy.log_std).detach().cpu().numpy()
@@ -129,6 +129,7 @@ class RewardLoggingCallback(BaseCallback):
                 self.writer.add_scalar("train_cus/x_std", x_s, current_step)
                 self.writer.add_scalar("train_cus/y_std", y_s, current_step)
                 self.writer.add_scalar("train_cus/z_std", z_s, current_step)
+        '''
         return True
         
     def _on_training_end(self) -> None:
@@ -187,6 +188,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
 
     #agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
+    #print(policy_arch)
+    #import pdb; pdb.set_trace()
     agent = DDPG(policy_arch, env, verbose=1, **agent_cfg)
     new_logger = configure(log_dir, ["stdout", "tensorboard"])
     agent.set_logger(new_logger)

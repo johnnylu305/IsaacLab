@@ -272,6 +272,7 @@ class SCANRLEnv(DirectRLEnv):
         # action
         # N, 9 (nearnest free xyz, look at xyz, real xyz)
         self._actions = actions.clone()
+        
         self._xyz = self._actions[:, :3]
         
         self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
