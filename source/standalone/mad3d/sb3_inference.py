@@ -60,20 +60,6 @@ CAMERA_HEIGHT = 1000
 CAMERA_WIDTH = 1000
 TARGET_HEIGHT = 300
 TARGET_WIDTH = 300
-CameraCfg = CameraCfg(
-    prim_path="/World/Camera",
-    offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
-    update_period=0,  # Update every physical step
-    data_types=["distance_to_image_plane","rgb"],
-    spawn=sim_utils.PinholeCameraCfg(
-            focal_length=13.8, # in cm default 24, dji 1.38
-            #focus_distance=1.0, # in m 
-            horizontal_aperture=24., # in mm 
-            clipping_range=(0.01, 60.0) # near and far plane in meter
-        ),
-    width=CAMERA_WIDTH,
-    height=CAMERA_HEIGHT
-)
 
 
 class OccupancyGrid:
@@ -95,7 +81,7 @@ class OccupancyGrid:
         return 1 / (1 + torch.exp(-self.grid))
 
 
-def setup_scene(world, scene_path, scene_prim_root="/World/Scene"):
+def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
     # floor
     world.scene.add_ground_plane(size=40.0, color=torch.tensor([52.0 / 255.0, 195.0 / 255.0, 235.0 / 255.0]))
     # light
@@ -109,10 +95,25 @@ def setup_scene(world, scene_path, scene_prim_root="/World/Scene"):
 
     # activate the stage
     world.scene.add(scene_prim)
-    
+
+    cameraCfg = CameraCfg(
+        prim_path=f"/World/Camera_{index}",
+        offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
+        update_period=0,  # Update every physical step
+        data_types=["distance_to_image_plane","rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+                focal_length=13.8, # in cm default 24, dji 1.38
+                #focus_distance=1.0, # in m 
+                horizontal_aperture=24., # in mm 
+                clipping_range=(0.01, 60.0) # near and far plane in meter
+            ),
+        width=CAMERA_WIDTH,
+        height=CAMERA_HEIGHT
+    )
+ 
     scene_entities = {}
     
-    scene_entities["camera"] = Camera(CameraCfg)
+    scene_entities[f"camera_{index}"] = Camera(cameraCfg)
 
     return scene_entities
 
@@ -205,14 +206,14 @@ def farthest_point_sampling(pcd, num_samples):
 
     return pcd[sampled_indices]
 
-def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, scene_id, end):
+def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, scene_id, end, dataset_name):
     # env 
     grid_size = GRID_SIZE
     env_size = ENV_SIZE
     # sim time step
     sim_dt = sim.get_physics_dt()
     # camera
-    camera = scene_entities["camera"]   
+    camera = scene_entities[f"camera_{scene_id}"]   
      
     # initial pose
     target_position = torch.tensor([INITIAL_POSE], dtype=torch.float32)
@@ -232,7 +233,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     pcd_gt = torch.rand((10000, 3), dtype=torch.float32)  # Replace `m` with the number of points
 
     # save path
-    save_img_folder = os.path.join(os.path.dirname(args_cli.checkpoint), "images")
+    save_img_folder = os.path.join(os.path.dirname(args_cli.checkpoint), f"{dataset_name}_data")
     folder_name = os.path.basename(os.path.dirname(hollow_occ_path))
     os.makedirs(os.path.join(save_img_folder, folder_name), exist_ok=True)
 
@@ -610,8 +611,10 @@ def main():
     for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path) in enumerate(scene_paths):
         print(f"{i}: {scene_path}")
         
+        dataset_name = os.path.basename(os.path.dirname(os.path.dirname(args_cli.input)))
+    
         # setup ground, light, and camera
-        scene_entities = setup_scene(world, scene_path)
+        scene_entities = setup_scene(world, scene_path, i)
 
         # output dir
         output_dir = os.path.dirname(scene_path)
@@ -620,14 +623,19 @@ def main():
         
         # TODO: update this
         gt_pcd_path = None
-        run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, i, len(scene_paths))
+        run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, i, len(scene_paths), dataset_name)
+
         
-        scene_entities["camera"].__del__()
+        # remove camera
+        prim_path = f"/World/Camera_{i}"
+        stage = omni.usd.get_context().get_stage()
+        if stage.GetPrimAtPath(prim_path):
+            stage.RemovePrim(Sdf.Path(prim_path))
+        scene_entities[f"camera_{i}"].__del__()
+        
+        del scene_entities[f"camera_{i}"]       
         
         world.clear()
-        
-        # may need to wait for camera?
-        time.sleep(3)
 
 
 if __name__ == "__main__":
