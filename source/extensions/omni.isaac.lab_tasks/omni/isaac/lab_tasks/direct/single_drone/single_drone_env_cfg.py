@@ -18,7 +18,7 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_30000rand_obja_lrsch_dilatednearest'
+CAMERA_FOLDER = 'camera_image_envsize20_30000rand_obja_lrsch_dilatednearest_randmore'
 
 
 # define crazyflie
@@ -76,8 +76,8 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     # randomly translate the object
     random_trans_obj = True
     # x, y translation range in meter
-    trans_obj_x = [-2, 2] 
-    trans_obj_y = [-2, 2]
+    trans_obj_x = [-5, 5] #[-2, 2] 
+    trans_obj_y = [-5, 5] #[-2, 2]
     
     # randomly sample n object
     random_sample_obj = True

@@ -614,27 +614,24 @@ def main():
         dataset_name = os.path.basename(os.path.dirname(os.path.dirname(args_cli.input)))
     
         # setup ground, light, and camera
-        scene_entities = setup_scene(world, scene_path, i)
+        scene_entities = setup_scene(world, scene_path, 0)
 
         # output dir
         output_dir = os.path.dirname(scene_path)
-        
         world.reset()
-        
         # TODO: update this
         gt_pcd_path = None
-        run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, i, len(scene_paths), dataset_name)
+        run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, 0, len(scene_paths), dataset_name)
 
         
         # remove camera
-        prim_path = f"/World/Camera_{i}"
+        scene_entities[f"camera_{0}"].__del__()
+        scene_entities[f"camera_{0}"].reset()
+        prim_path = f"/World/Camera_{0}"
         stage = omni.usd.get_context().get_stage()
         if stage.GetPrimAtPath(prim_path):
             stage.RemovePrim(Sdf.Path(prim_path))
-        scene_entities[f"camera_{i}"].__del__()
-        
-        del scene_entities[f"camera_{i}"]       
-        
+        del scene_entities[f"camera_{0}"]       
         world.clear()
 
 
