@@ -6,7 +6,7 @@ parser = argparse.ArgumentParser(description="Utility to create occupancy grid")
 parser.add_argument("--input", type=str, required=True, help="Path to the txt list.")
 parser.add_argument("--vis", action="store_true", help="If set, visualize occupancy grid.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
-parser.add_argument("--checkpoint", type=str, default='', help="Path to model checkpoint.")
+parser.add_argument("--output", type=str, default='', help="Path to save the output metrics.")
 # Append AppLauncher CLI args
 AppLauncher.add_app_launcher_args(parser)
 
@@ -42,9 +42,9 @@ from pxr import Sdf, UsdLux, UsdGeom, Gf, Usd
 from omni.isaac.lab.utils.math import convert_camera_frame_orientation_convention, euler_xyz_from_quat
 from omni.isaac.lab.sensors.camera.utils import create_pointcloud_from_depth, convert_orientation_convention
 from collections import deque
-from stable_baselines3.common.vec_env import VecNormalize
+#from stable_baselines3.common.vec_env import VecNormalize
 sys.path.append("/home/dsr/Documents/mad3d/isaac-sim-4.2.0/home/IsaacLab")
-from sb3_ppo_cus import PPO_Cus
+#from sb3_ppo_cus import PPO_Cus
 import sys
 sys.path.append('/projects/MAD3D/Zhuoli/IsaacLab/source/standalone/mad3d/neural_rendering')
 from neu_nbv_utils import util
@@ -109,7 +109,7 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
     world.scene.add(scene_prim)
 
     cameraCfg = CameraCfg(
-        prim_path=f"/World/Camera_{index}",
+        prim_path=f"/World/Camera_0",
         offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
         update_period=0,  # Update every physical step
         data_types=["distance_to_image_plane","rgb"],
@@ -125,7 +125,7 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
  
     scene_entities = {}
     
-    scene_entities[f"camera_{index}"] = Camera(cameraCfg)
+    scene_entities[f"camera_0"] = Camera(cameraCfg)
 
     return scene_entities
 
@@ -285,7 +285,7 @@ def run_neu_nbv_model(images, poses, neu_nbv_model, focal, c, z_near, z_far, can
                             )
     new_pose = poses[ref_index[-1]]
     position, quaternion = pose_to_position_quaternion(torch.tensor(new_pose))
-    return position, quaternion
+    return position, quaternion, ref_index
 
 def random_view(current_xyz, radius, phi_min, min_view_change, max_view_change):
     """
@@ -403,13 +403,14 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     # sim time step
     sim_dt = sim.get_physics_dt()
     # camera
-    camera = scene_entities[f"camera_{scene_id}"]   
+    camera = scene_entities[f"camera_0"]   
      
     # initial pose
     target_position = torch.tensor([INITIAL_POSE], dtype=torch.float32)
     # look at (0, 0, 2)
-    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))  
+    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 0], dtype=torch.float32).unsqueeze(0))  
     #camera.set_world_poses_from_view(torch.tensor([20,0,0]).unsqueeze(0).float(), torch.tensor([0,0,10]).unsqueeze(0).float())
+    #camera.set_world_poses_from_view(torch.tensor([15,0,0]).unsqueeze(0).float(), torch.tensor([0,0,10]).unsqueeze(0).float())
     # obv grid
     grid = OccupancyGrid(env_size, (1, grid_size, grid_size, grid_size))
     # obv face
@@ -423,7 +424,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     pcd_gt = torch.rand((10000, 3), dtype=torch.float32)  # Replace `m` with the number of points
 
     # save path
-    save_img_folder = os.path.join(os.path.dirname(args_cli.checkpoint), f"{dataset_name}_data")
+    save_img_folder = os.path.join(os.path.dirname(args_cli.output), f"{dataset_name}_data")
     folder_name = os.path.basename(os.path.dirname(hollow_occ_path))
     os.makedirs(os.path.join(save_img_folder, folder_name), exist_ok=True)
 
@@ -435,7 +436,8 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         camera.update(dt=sim.get_physics_dt())
     image0 = camera.data.output["rgb"][0].transpose(0,2).clone()/255.
     #camera.set_world_poses_from_view(torch.tensor([20,0,0]).unsqueeze(0).float(), torch.tensor([0,0,10]).unsqueeze(0).float())
-    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 1]).unsqueeze(0).float())
+    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2]).unsqueeze(0).float())
+    #camera.set_world_poses_from_view(torch.tensor([20,0,0]).unsqueeze(0).float(), torch.tensor([0,0,10]).unsqueeze(0).float())
     for i in range(10):
         sim.step()
         camera.update(dt=sim.get_physics_dt())
@@ -452,19 +454,19 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     #poses = sample_hemisphere(20, 2000)
     phi_min = 1.0
     #poses = uniform_sampling(env_size, phi_min)
-    view=[]
+    #view=[]
     
     angle_radius = env_size
     camera_pos = camera.data.pos_w.clone()
     camera_quat = camera.data.quat_w_ros.clone()
 
     new_pose = pos_quat_to_transformation_matrix(camera_pos, camera_quat)
-
-    for i in range(50):
-        local = random_view(camera_pos[0].cpu().numpy(), env_size, 0.15, 0.2, 1.05)
-        view.append(local)
-    poses = view_to_pose_batch(np.array(view), env_size)
-    poses = torch.tensor(poses).cuda().float()
+    #view = []
+    #for i in range(50):
+    #    local = random_view(camera_pos[0].cpu().numpy(), env_size, 0.15, 0.2, 1.05)
+    #    view.append(local)
+    #poses = view_to_pose_batch(np.array(view), env_size)
+    #poses = torch.tensor(poses).cuda().float()
     # start scanning
     for index in range(NUM_STEPS):
         print("")
@@ -473,17 +475,12 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             sim.step()
             camera.update(dt=sim_dt)
         
-        camera_ori = camera.data.quat_w_ros.clone()
-        camera_ori = convert_camera_frame_orientation_convention(camera_ori, origin="ros", target="world")
-        roll, pitch, yaw = euler_xyz_from_quat(camera_ori)
-
-        if index==0:
-            pose = torch.tensor([INITIAL_POSE + [pitch, yaw]]).to(DEVICE)
-        else:
-            pose[0, :3] = new_positions
-            pose[0, 3] = pitch
-            pose[0, 4] = yaw
-
+        view = []
+        for i in range(50):
+            local = random_view(camera_pos[0].cpu().numpy(), env_size, 0.15, 0.2, 1.05)
+            view.append(local)
+        poses = view_to_pose_batch(np.array(view), env_size)
+        poses = torch.tensor(poses).cuda().float()
         # depth image
         depth_image = torch.clamp(camera.data.output["distance_to_image_plane"], 0, env_size * 4)
         # depth image to local point cloud
@@ -544,7 +541,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         print("Acc:", accuracy)
 
         # get observation 
-        obs = _get_observations(probability_grid, rgb_image, pose.clone(), obv_face)
+        obs = _get_observations(probability_grid, rgb_image, torch.tensor(new_pose).cuda(), obv_face)
         # torch tensor to numpy
         for key, value in obs.items():
             obs[key] = value.cpu().numpy()
@@ -565,10 +562,11 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         images = torch.tensor(images).cuda().float()
         input_images = F.interpolate(images, size=(TARGET_HEIGHT, TARGET_WIDTH), mode='bilinear', align_corners=False)
         scale_factor = TARGET_HEIGHT/CAMERA_HEIGHT
-        new_positions, new_quaternions = run_neu_nbv_model(input_images, poses, agent, focal*scale_factor, c*scale_factor, z_near, z_far, candidate_list, agent, initial_ref_index)
-        
+        new_position, new_quaternion, ref_index = run_neu_nbv_model(input_images, poses, agent, focal*scale_factor, c*scale_factor, z_near, z_far, candidate_list, agent, initial_ref_index)
+        new_pose = pos_quat_to_transformation_matrix(new_position.cpu(), new_quaternion.cpu())
+        print(ref_index)
         # save data
-        x, y, z = new_positions
+        x, y, z = new_position
         #_yaw, _pitch = pose[0, 3:]
         coverage_ratio = coverage_ratio.cpu().numpy()[0][0]
         suffix = f"_{index}_{x:.2f}_{y:.2f}_{z:.2f}_{coverage_ratio:.2f}.png"
@@ -602,16 +600,16 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         
         # apply action
         #camera.set_world_poses(new_positions, orientation_camera)
-        camera.set_world_poses(new_positions.unsqueeze(0), convert_orientation_convention(new_quaternions.unsqueeze(0).float(), origin="world", target="ros"))
-        for _ in range(4):
-            sim.step()
-            camera.update(dt=sim_dt)
-        view = []
-        for i in range(50):
-            local = random_view(camera_pos[0].cpu().numpy(), env_size, 0.15, 0.2, 1.05)
-            view.append(local)
-        poses = view_to_pose_batch(np.array(view), env_size)
-        poses = torch.tensor(poses).float()
+        camera.set_world_poses(new_position.unsqueeze(0), convert_orientation_convention(new_quaternion.unsqueeze(0).float(), origin="world", target="ros"))
+        #for _ in range(4):
+        #    sim.step()
+        #    camera.update(dt=sim_dt)
+        #view = []
+        #for i in range(50):
+        #    local = random_view(camera_pos[0].cpu().numpy(), env_size, 0.15, 0.2, 1.05)
+        #    view.append(local)
+        #poses = view_to_pose_batch(np.array(view), env_size)
+        #poses = torch.tensor(poses).float()
 
     all_points = np.vstack(all_points)
     all_colors = np.vstack(all_colors)
@@ -789,7 +787,7 @@ def main():
     # world initialization
     world = World(stage_units_in_meters=1.0, backend="torch", device="cpu")
     # user viewport
-    set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
+    set_camera_view(eye=np.array([-40, -40, 60]), target=np.array([15, -15, 8]))
     # create agent
     #agent = make_env()
     
@@ -831,7 +829,7 @@ def main():
         scene_entities[f"camera_{i}"].__del__()
         
         del scene_entities[f"camera_{i}"]       
-        '''
+        
         # remove camera
         scene_entities[f"camera_{i}"].__del__()
         scene_entities[f"camera_{i}"].reset()
@@ -840,6 +838,7 @@ def main():
         if stage.GetPrimAtPath(prim_path):
             stage.RemovePrim(Sdf.Path(prim_path))
         del scene_entities[f"camera_{i}"]       
+        '''
         world.clear()
 
 

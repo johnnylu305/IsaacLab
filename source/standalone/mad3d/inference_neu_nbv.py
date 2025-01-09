@@ -1083,9 +1083,9 @@ def main():
     world = World(stage_units_in_meters=1.0, backend='torch', device='cpu')
     stage = world.scene.stage
 
-    set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
-
-    for i, scene_path in enumerate(scenes_path):
+    #set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
+    set_camera_view(eye=np.array([-40, -40, 60]), target=np.array([15, -15, 8]))
+    for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path) in enumerate(scene_paths):
         scene_entities = setup_scene(world, scene_path)
         if args_cli.rescale:
             rescale_scene()

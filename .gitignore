@@ -2,7 +2,15 @@ Occ_saved/*
 Set_C_converted/*
 camera_image
 camera_image_*
+**/preprocess20_data/
+preprocess20_data/*
 
+**/*.ply
+**/*.npy
+**/*.csv
+*.csv
+*.npy
+*.ply
 *.png
 *.pyc
 
