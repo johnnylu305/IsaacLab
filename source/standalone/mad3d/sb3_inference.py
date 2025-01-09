@@ -97,7 +97,7 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
     world.scene.add(scene_prim)
 
     cameraCfg = CameraCfg(
-        prim_path=f"/World/Camera_{index}",
+        prim_path=f"/World/Camera_0",
         offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
         update_period=0,  # Update every physical step
         data_types=["distance_to_image_plane","rgb"],
@@ -113,7 +113,7 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
  
     scene_entities = {}
     
-    scene_entities[f"camera_{index}"] = Camera(cameraCfg)
+    scene_entities[f"camera_0"] = Camera(cameraCfg)
 
     return scene_entities
 
@@ -213,7 +213,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     # sim time step
     sim_dt = sim.get_physics_dt()
     # camera
-    camera = scene_entities[f"camera_{scene_id}"]   
+    camera = scene_entities[f"camera_0"]   
      
     # initial pose
     target_position = torch.tensor([INITIAL_POSE], dtype=torch.float32)
@@ -614,24 +614,24 @@ def main():
         dataset_name = os.path.basename(os.path.dirname(os.path.dirname(args_cli.input)))
     
         # setup ground, light, and camera
-        scene_entities = setup_scene(world, scene_path, 0)
+        scene_entities = setup_scene(world, scene_path, i)
 
         # output dir
         output_dir = os.path.dirname(scene_path)
         world.reset()
         # TODO: update this
         gt_pcd_path = None
-        run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, 0, len(scene_paths), dataset_name)
+        run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, i, len(scene_paths), dataset_name)
 
         
         # remove camera
-        scene_entities[f"camera_{0}"].__del__()
-        scene_entities[f"camera_{0}"].reset()
-        prim_path = f"/World/Camera_{0}"
+        scene_entities[f"camera_0"].__del__()
+        scene_entities[f"camera_0"].reset()
+        prim_path = f"/World/Camera_0"
         stage = omni.usd.get_context().get_stage()
         if stage.GetPrimAtPath(prim_path):
             stage.RemovePrim(Sdf.Path(prim_path))
-        del scene_entities[f"camera_{0}"]       
+        del scene_entities[f"camera_0"]       
         world.clear()
 
 
