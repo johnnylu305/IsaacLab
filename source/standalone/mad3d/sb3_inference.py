@@ -40,6 +40,7 @@ from omni.isaac.core.utils.viewports import set_camera_view
 from omni.kit.viewport.utility import get_active_viewport, capture_viewport_to_file
 from pxr import Sdf, UsdLux, UsdGeom, Gf, Usd
 from omni.isaac.lab.utils.math import convert_camera_frame_orientation_convention, euler_xyz_from_quat
+from omni.isaac.core.utils.prims import delete_prim
 
 from stable_baselines3.common.vec_env import VecNormalize
 sys.path.append("/home/dsr/Documents/mad3d/isaac-sim-4.2.0/home/IsaacLab")
@@ -56,11 +57,42 @@ CAMERA_OFFSET = [0.1, 0, 0]
 # camera initial position
 INITIAL_POSE = [10, 10, 2]
 # Sensor"
-CAMERA_HEIGHT = 1000
-CAMERA_WIDTH = 1000
+CAMERA_HEIGHT = 900 #600
+CAMERA_WIDTH = 900 #600
 TARGET_HEIGHT = 300
 TARGET_WIDTH = 300
 
+
+def _bresenhamline_nslope(slope, device):
+    scale = torch.amax(torch.abs(slope), dim=1).reshape(-1, 1)
+    zeroslope = (scale == 0).all(1)
+    scale[zeroslope] = torch.ones(1, dtype=torch.long).to(device)
+    normalizedslope = slope / scale
+    normalizedslope[zeroslope] = torch.zeros(slope[0].shape).to(device)
+    return normalizedslope
+
+def _bresenhamlines(start, end, max_iter, device):
+    if max_iter == -1:
+        max_iter = torch.amax(torch.amax(torch.abs(end - start), dim=1))
+    npts, dim = start.shape
+    nslope = _bresenhamline_nslope(end - start, device)
+
+    # steps to iterate on
+    stepseq = torch.arange(1, max_iter + 1).to(device)
+    stepmat = stepseq.repeat(dim, 1) #np.tile(stepseq, (dim, 1)).T
+    stepmat = stepmat.T
+
+    # some hacks for broadcasting properly
+    bline = start[:, None, :] + nslope[:, None, :] * stepmat
+
+    # Approximate to nearest int
+    bline_points = torch.round(bline).to(start.dtype)
+
+    return bline_points
+
+def bresenhamline(start, end, max_iter=5, device='cpu'):
+    # Return the points as a single array
+    return _bresenhamlines(start, end, max_iter, device).reshape(-1, start.shape[-1])
 
 class OccupancyGrid:
     def __init__(self, env_size, grid_size, device="cpu"):
@@ -72,14 +104,24 @@ class OccupancyGrid:
     def update_log_odds(self, i, indices, occupied=True):
         indices = indices.long()
         if occupied:
-            self.grid[i, indices[:, 0], indices[:, 1], indices[:, 2]] += 0.84
+            self.grid[i, indices[:, 0], indices[:, 1], indices[:, 2]] += 1.0
         else:
-            self.grid[i, indices[:, 0], indices[:, 1], indices[:, 2]] -= 0.4
-        self.grid.clamp_(min=-3.5, max=3.5)
+            self.grid[i, indices[:, 0], indices[:, 1], indices[:, 2]] -= 0.01
+        self.grid.clamp_(min=-10.0, max=10.0)
 
     def log_odds_to_prob(self):
         return 1 / (1 + torch.exp(-self.grid))
 
+    def trace_path_and_update(self, i, camera_position, points):
+        camera_position = torch.tensor(camera_position).to(DEVICE)
+        end_pts = (camera_position).unsqueeze(0).long().to(DEVICE)
+        start_pts = (points.to(DEVICE)).long()
+        #start_pts = start_pts.repeat(end_pts.shape[0],1)
+        bresenham_path = bresenhamline(start_pts, end_pts, max_iter=-1, device=DEVICE)
+        mask = (bresenham_path[:,0]>=0) & (bresenham_path[:,1]>=0) & (bresenham_path[:,2]>=0) &\
+            (bresenham_path[:,0]<self.grid_size[1]) & (bresenham_path[:,1]<self.grid_size[1]) & (bresenham_path[:,2]<self.grid_size[1])
+        if bresenham_path[mask] is not None:
+            self.update_log_odds(i, bresenham_path[mask], occupied=False)
 
 def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
     # floor
@@ -96,10 +138,12 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
     # activate the stage
     world.scene.add(scene_prim)
 
+    sim_dt = world.get_physics_dt()
+
     cameraCfg = CameraCfg(
         prim_path=f"/World/Camera_0",
         offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
-        update_period=0,  # Update every physical step
+        update_period=sim_dt,  # Update every physical step
         data_types=["distance_to_image_plane","rgb"],
         spawn=sim_utils.PinholeCameraCfg(
                 focal_length=13.8, # in cm default 24, dji 1.38
@@ -212,6 +256,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     env_size = ENV_SIZE
     # sim time step
     sim_dt = sim.get_physics_dt()
+    
     # camera
     camera = scene_entities[f"camera_0"]   
      
@@ -221,7 +266,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))  
 
     # obv grid
-    grid = OccupancyGrid(env_size, (1, grid_size, grid_size, grid_size))
+    grid = OccupancyGrid(env_size, (1, grid_size, grid_size, grid_size), device=DEVICE)
     # obv face
     obv_face = torch.zeros(NUM_ENVS, GRID_SIZE, GRID_SIZE, GRID_SIZE, 6, device=DEVICE) 
 
@@ -243,10 +288,10 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     for index in range(NUM_STEPS):
         print("")
         # simulate
-        for _ in range(4):
+        for _ in range(3):
             sim.step()
             camera.update(dt=sim_dt)
-        
+
         camera_ori = camera.data.quat_w_ros.clone()
         camera_ori = convert_camera_frame_orientation_convention(camera_ori, origin="ros", target="world")
         roll, pitch, yaw = euler_xyz_from_quat(camera_ori)
@@ -274,12 +319,15 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         offset = torch.tensor([env_size / 2, env_size / 2, 0]).to(points_3d_world.device)
         if points_3d_world[mask].shape[0] > 0:
             ratio = grid_size / env_size
+            grid.trace_path_and_update(0,
+                                       torch.floor((camera.data.pos_w[0]+offset)*ratio),
+                                       torch.floor((points_3d_world[0] + offset) * ratio))
             grid.update_log_odds(0, torch.floor((points_3d_world[mask] + offset) * ratio), occupied=True)
             obv_face = torch.logical_or(obv_face,
                                         get_seen_face(torch.unique(torch.floor((points_3d_world[mask]+offset)*ratio).int(), dim=0),
                                         torch.floor((camera.data.pos_w+offset)*ratio), GRID_SIZE, DEVICE))
         # probability grid
-        probability_grid = grid.log_odds_to_prob()
+        probability_grid = grid.log_odds_to_prob().cpu()
 
         # coverage ratio
         hard_occ = torch.where(probability_grid[0, :, :, :] >= 0.6, 1, 0)
@@ -562,6 +610,13 @@ def make_env():
     agent = PPO_Cus.load(checkpoint_path, print_system_info=True) 
     return agent
 
+def delete_prim_and_children(prim_path, stage):
+    prim = stage.GetPrimAtPath(prim_path)
+    if prim.IsValid():
+        for child in prim.GetChildren():
+            delete_prim_and_children(child.GetPath().pathString, stage)
+        delete_prim(prim_path)
+
 def main():
     # Define the input file
     input_file = args_cli.input
@@ -607,33 +662,56 @@ def main():
     # create agent
     agent = make_env()
     
+    # floor
+    world.scene.add_ground_plane(size=40.0, color=torch.tensor([52.0 / 255.0, 195.0 / 255.0, 235.0 / 255.0]))
+    # light
+    UsdLux.DomeLight.Define(world.scene.stage, Sdf.Path("/DomeLight")).CreateIntensityAttr(500)    
+    
+    sim_dt = world.get_physics_dt()
+    cameraCfg = CameraCfg(
+        prim_path=f"/World/Camera_0",
+        offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
+        update_period=sim_dt,  # Update every physical step
+        data_types=["distance_to_image_plane","rgb"],
+        spawn=sim_utils.PinholeCameraCfg(
+                focal_length=24., # in mm 13.8
+                horizontal_aperture=21., # in mm 24
+                clipping_range=(0.01, 60.0) # near and far plane in meter
+            ),
+        width=CAMERA_WIDTH,
+        height=CAMERA_HEIGHT
+    )
+    scene_entities = {}
+    scene_entities[f"camera_0"] = Camera(cameraCfg)
+
+
     # start scan the shapes
     for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path) in enumerate(scene_paths):
         print(f"{i}: {scene_path}")
         
         dataset_name = os.path.basename(os.path.dirname(os.path.dirname(args_cli.input)))
-    
-        # setup ground, light, and camera
-        scene_entities = setup_scene(world, scene_path, i)
+
+        # add usd into the stage
+        scene_prim_root=f"/World/Scene_{i}"
+        scene = add_reference_to_stage(usd_path=scene_path, prim_path=scene_prim_root)
+        # define the property of the stage
+        scene_prim = XFormPrim(prim_path=scene_prim_root, name=f"Scene_{i}", translation=[0, 0, 0])
+        # activate the stage
+        world.scene.add(scene_prim)
+        scene_prim_path = scene_prim.prim_path
 
         # output dir
         output_dir = os.path.dirname(scene_path)
         world.reset()
+
         # TODO: update this
         gt_pcd_path = None
         run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, i, len(scene_paths), dataset_name)
 
-        
-        # remove camera
-        scene_entities[f"camera_0"].__del__()
-        scene_entities[f"camera_0"].reset()
-        prim_path = f"/World/Camera_0"
-        stage = omni.usd.get_context().get_stage()
-        if stage.GetPrimAtPath(prim_path):
-            stage.RemovePrim(Sdf.Path(prim_path))
-        del scene_entities[f"camera_0"]       
-        world.clear()
-
+        # remove building
+        delete_prim(scene_prim_path)
+        if args_cli.vis:
+            delete_prim("/World/OccupancyBlocks")
 
 if __name__ == "__main__":
     main()

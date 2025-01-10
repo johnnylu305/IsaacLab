@@ -45,7 +45,8 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
     device = prob_grid.device
 
     # set 26 neighbors to occupied 
-    high_value_mask = (prob_grid >= threshold).float()  # Shape: (n_env, x, y, z)
+    # shoud not use 0.5 which may contain a lot of unknown voxels
+    high_value_mask = (prob_grid >= 0.6).float()  # Shape: (n_env, x, y, z)
     # Step 2: Apply 3D max pooling to find neighbors
     pooled = F.max_pool3d(high_value_mask.unsqueeze(1), kernel_size=3, stride=1, padding=1)
     # Step 3: Create a neighbor mask by excluding the original high-value voxels
