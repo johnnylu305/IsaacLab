@@ -33,8 +33,7 @@ import omni.isaac.core.utils.numpy.rotations as rot_utils
 import matplotlib.pyplot as plt
 import omni
 from .mad3d_utils import check_building_collision, rescale_scene, compute_orientation, create_blocks_from_occupancy, OccupancyGrid, get_seen_face, remove_occluded_face, check_free, shift_gt_occs, shift_gt_faces, shift_occs, check_height, compute_weighted_centroid
-import open3d as o3d
-from scipy.spatial import KDTree
+
 
 class SCANRLEnv(DirectRLEnv):
     cfg: SCANRLEnvCfg
@@ -47,10 +46,9 @@ class SCANRLEnv(DirectRLEnv):
         self._episode_sums = {
             key: torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
             for key in [
-                "distance",
                 "face_ratio", # positive reward
                 "coverage_ratio",
-                "goal", # negative reward
+                "all_penalty", # negative reward
                 "status coverage_ratio", # average coverage ratio
                 "status face_coverage_ratio", # average face coverage ratio
             ]
@@ -85,7 +83,7 @@ class SCANRLEnv(DirectRLEnv):
         # [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]
         self.gt_faces = torch.zeros((self.cfg.num_envs, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size, 6), device=self.device)
 
-        self.gt_pointclouds = np.zeros((self.cfg.num_envs, 10000, 3))
+
         # collision or not according to the fill_occ_set.pkl
         self.col = [False for i in range(self.cfg.num_envs)]
         # is free or not according to the probability occupancy grid
@@ -117,8 +115,8 @@ class SCANRLEnv(DirectRLEnv):
         
         # rgb image for observation
         # N,T,H,W,3
-        # T is 6
-        self.obv_imgs = torch.zeros((self.cfg.num_envs, 6, self.cfg.camera_h, self.cfg.camera_w, 3), device=self.device)
+        # T is 1
+        self.obv_imgs = torch.zeros((self.cfg.num_envs, 1, self.cfg.camera_h, self.cfg.camera_w, 3), device=self.device)
                 
         # probability occupancy grid and its coordinate for observation
         # N, x_size, y_size, z_size, label+xyz
@@ -144,7 +142,8 @@ class SCANRLEnv(DirectRLEnv):
         self.last_face_ratio = torch.zeros(self.cfg.num_envs, device=self.device).reshape(-1, 1)
         # face ratio
         self.face_ratio = torch.zeros(self.cfg.num_envs,  device=self.device).reshape(-1, 1)
-                
+        self.last_xyz = torch.zeros(self.cfg.num_envs, 3, device=self.device)
+        
         # terrain
         self.cfg.terrain.num_envs = self.scene.cfg.num_envs
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
@@ -170,7 +169,7 @@ class SCANRLEnv(DirectRLEnv):
         self.grid = OccupancyGrid(self.cfg.env_size, grid_size, self.cfg.decrement, self.cfg.increment, 
                                   self.cfg.max_log_odds, self.cfg.min_log_odds, self.device)
 
-        
+        import pdb; pdb.set_trace()
         ### scene
         # load paths for scenes
         # (usd_path, hollow_occ_path, fill_occ_set_path, faces_path, usdfilecfg)
@@ -210,11 +209,10 @@ class SCANRLEnv(DirectRLEnv):
                         # Search for `faces.npy` and `fill_occ_set.pkl` in the same directory
                         faces_path = os.path.join(directory, "faces.npy")
                         fill_occ_set_path = os.path.join(directory, "fill_occ_set.pkl")
-                         
-                        pointcloud_path = os.path.join(directory.replace("/home/Dataset/houes3k_env20//preprocess", "/home/hat/Documents/Dataset/test_pointcloud"), os.path.basename(usd_files[0]).replace(".usd", ".ply"))
+
                         # Ensure the required files exist
                         if usd_files and os.path.exists(faces_path) and os.path.exists(fill_occ_set_path):
-                            self.scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, UsdFileCfg(usd_path=usd_files[0]), pointcloud_path))
+                            self.scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, UsdFileCfg(usd_path=usd_files[0])))
         
         # object translation vector
         if self.cfg.random_trans_obj:     
@@ -240,7 +238,7 @@ class SCANRLEnv(DirectRLEnv):
  
         # load labels
         for i, scene in enumerate(self.sampled_scene_lists):            
-            _, hollow_occ_path, fill_occ_path, faces_path, _, pointcloud_path= scene
+            _, hollow_occ_path, fill_occ_path, faces_path, _ = scene
     
             # load hollow_occ.npy for coverage ratio computation
             self.gt_occs[i] = torch.tensor(np.load(hollow_occ_path)).to(self.device)
@@ -269,43 +267,6 @@ class SCANRLEnv(DirectRLEnv):
         self.slice_height = self.cfg.env_size/self.cfg.grid_size  # height of each slice in meters
 
 
-    
-    def calculate_surface_coverage(self, ground_truth_points, reconstructed_points, threshold=0.1):
-        """
-        Calculate the surface coverage Cs.
-        
-        Parameters:
-        - ground_truth_points: np.ndarray of shape (B, N_gt, 3), ground truth 3D points for B batches.
-        - reconstructed_points: np.ndarray of shape (B, N_rec, 3), reconstructed 3D points for B batches.
-        - threshold: float, the distance threshold to consider a match.
-        
-        Returns:
-        - Cs: np.ndarray of shape (B,), the surface coverage as a percentage for each batch.
-        """
-        batch_size = ground_truth_points.shape[0]
-        Cs = np.zeros(batch_size)
-
-        for b in range(batch_size):
-            # Extract batch points
-            gt_points = ground_truth_points[b]
-            rec_points = reconstructed_points[b]
-
-            # Total number of ground truth points
-            N_gt = gt_points.shape[0]
-            
-            # Build a k-d tree for the reconstructed points
-            tree = KDTree(rec_points)
-            
-            # For each ground truth point, find the nearest reconstructed point
-            distances, _ = tree.query(gt_points)
-            
-            # Count points with distance less than the threshold
-            N_obs = np.sum(distances < threshold)
-            
-            # Calculate surface coverage for the batch
-            Cs[b] = (N_obs / N_gt) * 100
-
-        return Cs
 
     def _pre_physics_step(self, actions: torch.Tensor):
         self.env_step += 1
@@ -314,18 +275,16 @@ class SCANRLEnv(DirectRLEnv):
         # N, 9 (nearnest free xyz, look at xyz, real xyz)
         self._actions = actions.clone()
         
-        self._last_xyz = self._camera.data.pos_w.clone()
         #self._xyz = self._actions[:, :3]
         
         #self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
-        self._azimuth = self._actions[:,0] *torch.pi # horizontal angle
-        self._elevation = (self._actions[:,1] + 1) * 0.5 * torch.pi # for upper hemisphere only
-        self._distance = (self._actions[:,2] + 1) * 0.5 # 0 to 1
+        self._azimuth = self._actions[:,0]*2.*torch.pi # horizontal angle
+        self._elevation = self._actions[:,1]*0.5*torch.pi # for upper hemisphere only
+        self._distance = self._actions[:,2]
         x = self._distance * torch.cos(self._elevation) * torch.cos(self._azimuth)
         y = self._distance * torch.cos(self._elevation) * torch.sin(self._azimuth)
         z = self._distance * torch.sin(self._elevation)
         self._xyz = torch.cat([x.unsqueeze(1), y.unsqueeze(1), z.unsqueeze(1)],dim=1) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
-        #print(self._actions)
         #print(self._xyz) 
         # 0~1
         self.lookatxyz = torch.tensor([0., 0., 0.]).to(self.device).unsqueeze(0).expand(self._actions.shape[0], -1)
@@ -405,7 +364,7 @@ class SCANRLEnv(DirectRLEnv):
         self.single_observation_space["policy"] = gym.spaces.Dict()
         # normalize input
         # N, 6 (xyz, yaw pitch, height)
-        #self.single_observation_space["policy"]["pose_step"] = gym.spaces.Box(low=-1., high=1., shape=(6,))
+        self.single_observation_space["policy"]["pose_step"] = gym.spaces.Box(low=-1., high=1., shape=(6,))
         # N, 1, H, W
         self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=0., high=1., shape=(1, self.cfg.camera_h, self.cfg.camera_w))
         # N, 10 (occ + coords + face occ), x, y, z
@@ -436,11 +395,6 @@ class SCANRLEnv(DirectRLEnv):
         
         # obv image is 0~1 
         for i in env_ids:
-            self.obv_imgs[i][5] = self.obv_imgs[i][4]
-            self.obv_imgs[i][4] = self.obv_imgs[i][3]
-            self.obv_imgs[i][3] = self.obv_imgs[i][2]
-            self.obv_imgs[i][2] = self.obv_imgs[i][1]
-            self.obv_imgs[i][1] = self.obv_imgs[i][0]
             self.obv_imgs[i][0] = rgb_image[i][:, :, :3] / 255.
 
         # collision detection
@@ -455,9 +409,9 @@ class SCANRLEnv(DirectRLEnv):
             # not height limit for non-nearest setting
 
         # robot pose
-        #for i in env_ids:
-        #    self.obv_pose_history[i, self.env_step[i].int(), :3] = (self.robot_pos[i] - self._terrain.env_origins[i])/self.cfg.env_size
-        #z    self.obv_pose_history[i, self.env_step[i].int(), 3:] = self.robot_ori[i]/3.15
+        for i in env_ids:
+            self.obv_pose_history[i, self.env_step[i].int(), :3] = (self.robot_pos[i] - self._terrain.env_origins[i])/self.cfg.env_size
+            self.obv_pose_history[i, self.env_step[i].int(), 3:] = self.robot_ori[i]/3.15
 
         # get camera intrinsic and extrinsic matrix
         intrinsic_matrix = self._camera.data.intrinsic_matrices.clone()
@@ -508,16 +462,10 @@ class SCANRLEnv(DirectRLEnv):
                         # vis occ
                         create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
                                                      vis_occ[j, :, :, i], self.cell_size, i*self.slice_height, i, self.cfg.env_size, 2, 60)
-        points_3d_world_no_shift = points_3d_world.clone()
-        for i in env_ids:
-            #points_3d_world_no_shift = points_3d_world.clone()
-            points_3d_world_no_shift[i,:,0] = points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]
-            points_3d_world_no_shift[i,:,1]  = points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]
 
-        #Cs = self.calculate_surface_coverage(self.gt_pointclouds, points_3d_world_no_shift.cpu().numpy(), threshold=0.1)
-        #print(Cs)
+
         hard_occ = torch.where(self.obv_occ[:, :, :, :, 0] >= 0.6, 1, 0)
-        
+
         # remove the occluded face by checking current occ grid
         # the face amount may still larger than gt because current occ grid is incomplete
         #self.obv_face = remove_occluded_face(self.cfg.grid_size, hard_occ, self.obv_face, self.device)
@@ -539,9 +487,7 @@ class SCANRLEnv(DirectRLEnv):
                     continue
                 root_path = os.path.join(self.cfg.camera_folder, f'{self.env_episode[i]}')
                 os.makedirs(root_path, exist_ok=True)
-                #x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
-                #x, y, z = self._xyz[i]
-                x, y, z = 0, 0, 0
+                x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
                 cv = self.coverage_ratio[i, 0]
                 lx, ly, lz = self.lookatxyz[i]
                 base_name = f'{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{cv:.3f}_{self.face_ratio[i][0]:.3f}_{self.not_free[i]}_{self.not_height[i]}_{self.real_xyz[i][0]:.3f}_{self.real_xyz[i][1]:.3f}_{self.real_xyz[i][2]:.3f}_{self.h_limit[i]}_{self.robot_ori[i, 0]:.2f}_{lx:.1f}_{ly:.1f}_{lz:.1f}.png'
@@ -556,13 +502,13 @@ class SCANRLEnv(DirectRLEnv):
     def _get_observations(self) -> dic:
         # pose: N, T, 7 (xyz + pitch yaw + height limit)
         # current pose
-        #current_pose = self.obv_pose_history[torch.arange(self.cfg.num_envs), self.env_step.int()]
+        current_pose = self.obv_pose_history[torch.arange(self.cfg.num_envs), self.env_step.int()]
         # reshape and normalize env_step
         #env_step_normalized = (self.env_step.to(self.device) / self.cfg.total_img).unsqueeze(1)
         # expand h_limit to match batch dimensions
-        #h_limit_expanded = self.h_limit.unsqueeze(1) / self.cfg.grid_size
+        h_limit_expanded = self.h_limit.unsqueeze(1) / self.cfg.grid_size
         # concatenate current pose, normalized step, and h_limit
-        #pose_step = torch.cat([current_pose.reshape(self.cfg.num_envs, -1), h_limit_expanded], dim=1)
+        pose_step = torch.cat([current_pose.reshape(self.cfg.num_envs, -1), h_limit_expanded], dim=1)
 
         # occ: N, grid_size, grid_size, grid_size, occ + coordinate + face occ
         occ_face = torch.cat((self.obv_occ, self.obv_face), dim=-1)
@@ -573,7 +519,8 @@ class SCANRLEnv(DirectRLEnv):
         center = compute_weighted_centroid(occ_face[:, :, :, 1:, 4:], self.gt_faces[:, :, :, 1:, :])
         center /= occ_face.shape[1]
 
-        obs = {
+
+        obs = {"pose_step": pose_step,
                "img": gray_scale_img.reshape(-1, 1, self.cfg.camera_h, self.cfg.camera_w),
                "occ": occ_face.permute(0, 4, 1, 2, 3),
                "env_size": torch.ones((self.cfg.num_envs, 1)) * self.cfg.env_size,
@@ -590,25 +537,14 @@ class SCANRLEnv(DirectRLEnv):
         col_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
         # if collision, no information gain, not free, or exceeding height limit
         # all_mask is False
-        #all_mask = ((torch.tensor(self.col).bool() | (self.face_ratio==self.last_face_ratio).reshape(-1).bool().cpu() | torch.tensor(self.not_free).bool() | torch.tensor(self.not_height).bool())==False).float().to(self.device).reshape(-1, 1)
-        
-        self._current_xyz = self._camera.data.pos_w.clone()
-        difference = self._current_xyz - self._last_xyz
+        all_mask = ((torch.tensor(self.col).bool() | (self.face_ratio==self.last_face_ratio).reshape(-1).bool().cpu() | torch.tensor(self.not_free).bool() | torch.tensor(self.not_height).bool())==False).float().to(self.device).reshape(-1, 1)
 
-        # L2 norm across last dimension (D)
-        distance = torch.norm(difference, dim=-1).reshape(-1, 1)
-        
-        #sub_goal_reward = torch.logical_and(self.coverage_ratio_reward>=0.9, self.sub_goal==0)
-        sub_goal_mask = (torch.tensor(self.coverage_ratio) > 0.96).float().to(self.device).reshape(-1, 1)
-        
-        all_mask = ((1 - sub_goal_mask).bool() | col_mask.bool())
         rewards = {
-            #"face_ratio": (self.face_ratio-self.last_face_ratio) * col_mask * 30,
-            "coverage_ratio": ((self.coverage_ratio-self.last_coverage_ratio) * 1 - 2) * all_mask,
-            "distance": distance * 0.02 * all_mask,
-            "goal": 100.0 * sub_goal_mask,
+            "face_ratio": (self.face_ratio-self.last_face_ratio) * col_mask * 30,
+            "coverage_ratio": (self.coverage_ratio-self.last_coverage_ratio) * col_mask * 1,
+            "all_penalty": (1.0-all_mask)*-1,
         }
-        
+
         for k in rewards.keys():
             rewards[k] /= 100.
 
@@ -634,8 +570,8 @@ class SCANRLEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
 
         # done when exceeding the max steps or reaching goal face coverage ratio
-        #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.face_ratio.squeeze() >= self.cfg.goal)
-        done = self.coverage_ratio.squeeze() >= 0.96
+        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.face_ratio.squeeze() >= self.cfg.goal)
+
         return done, time_out
 
     def _reset_idx(self, env_ids: torch.Tensor | None):
@@ -676,9 +612,9 @@ class SCANRLEnv(DirectRLEnv):
         # reset step
         self.env_step[env_ids] = 0
         # reset pose history
-        #self.obv_pose_history[env_ids] = torch.zeros(self.cfg.total_img, 5).to(self.device)
+        self.obv_pose_history[env_ids] = torch.zeros(self.cfg.total_img, 5).to(self.device)
         # reset imgs obv
-        self.obv_imgs[env_ids] = torch.zeros((6, self.cfg.camera_h, self.cfg.camera_w, 3)).to(self.device)
+        self.obv_imgs[env_ids] = torch.zeros((1, self.cfg.camera_h, self.cfg.camera_w, 3)).to(self.device)
         # reset occ obv
         self.obv_occ[env_ids, :, :, :, 0] = 0.5
         # reset face obv
@@ -725,11 +661,8 @@ class SCANRLEnv(DirectRLEnv):
 
         # load labels
         for env_id in env_ids:
-            _, hollow_occ_path, fill_occ_path, faces_path, _, pointcloud_path = self.sampled_scene_lists[env_id]
-           
-            pcd = o3d.io.read_point_cloud(pointcloud_path)
-            point_cloud = np.asarray(pcd.points)
-            self.gt_pointclouds[env_id] = point_cloud
+            _, hollow_occ_path, fill_occ_path, faces_path, _ = self.sampled_scene_lists[env_id]
+
             # load hollow_occ.npy for coverage ratio computation
             self.gt_occs[env_id] = torch.tensor(np.load(hollow_occ_path)).to(self.device)
 

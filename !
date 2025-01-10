@@ -508,14 +508,12 @@ class SCANRLEnv(DirectRLEnv):
                         # vis occ
                         create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
                                                      vis_occ[j, :, :, i], self.cell_size, i*self.slice_height, i, self.cfg.env_size, 2, 60)
-        points_3d_world_no_shift = points_3d_world.clone()
-        for i in env_ids:
-            #points_3d_world_no_shift = points_3d_world.clone()
-            points_3d_world_no_shift[i,:,0] = points_3d_world[i,:, 0]-self._terrain.env_origins[i][0]
-            points_3d_world_no_shift[i,:,1]  = points_3d_world[i,:, 1]-self._terrain.env_origins[i][1]
 
-        #Cs = self.calculate_surface_coverage(self.gt_pointclouds, points_3d_world_no_shift.cpu().numpy(), threshold=0.1)
-        #print(Cs)
+        points_3d_world_no_shift = points_3d_world.clone()
+        points_3d_world_no_shift = points_3d_world_no_shift[i,:, 0]-self._terrain.env_origins[i][0]).abs()
+        points_3d_world_no_shift = points_3d_world_no_shift[i,:, 1]-self._terrain.env_origins[i][1]).abs()
+        Cs = self.calculate_surface_coverage(self.gt_pointclouds, points_3d_world_no_shift.cpu().numpy(), threshold=0.1)
+        print(Cs)
         hard_occ = torch.where(self.obv_occ[:, :, :, :, 0] >= 0.6, 1, 0)
         
         # remove the occluded face by checking current occ grid

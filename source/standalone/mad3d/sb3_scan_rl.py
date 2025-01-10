@@ -187,10 +187,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             clip_reward=np.inf,
         )
 
-    #agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
+    agent = PPO(policy_arch, env, verbose=1, **agent_cfg)
     #print(policy_arch)
     #import pdb; pdb.set_trace()
-    agent = DDPG(policy_arch, env, verbose=1, **agent_cfg)
+    #agent = DDPG(policy_arch, env, verbose=1, **agent_cfg)
     new_logger = configure(log_dir, ["stdout", "tensorboard"])
     agent.set_logger(new_logger)
 
