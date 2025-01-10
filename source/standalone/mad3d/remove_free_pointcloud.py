@@ -5,6 +5,33 @@ import argparse
 import os
 import glob
 from scipy.ndimage import distance_transform_edt
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+def visualize_voxel_grid_and_pointcloud(occupancy_grid, point_cloud, grid_shift=(10, 10, 0)):
+    """
+    Visualizes the voxel grid and point cloud together.
+
+    Args:
+        occupancy_grid (np.ndarray): Binary 3D occupancy grid.
+        point_cloud (np.ndarray): Nx3 array of points.
+    """
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot the voxel grid
+    x, y, z = np.where(occupancy_grid == 1)
+    ax.scatter(x - grid_shift[0], y - grid_shift[1], z, c='red', label='Voxel Grid')
+
+    # Plot the point cloud
+    ax.scatter(point_cloud[:, 0], point_cloud[:, 1], point_cloud[:, 2], c='blue', s=1, label='Point Cloud')
+
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    plt.show()
+
 
 # Functions to be tested
 def filter_point_cloud(point_cloud, occupancy_grid, grid_shift=(10,10,0)):
@@ -30,10 +57,12 @@ def filter_point_cloud(point_cloud, occupancy_grid, grid_shift=(10,10,0)):
     filtered_points = np.floor(point_cloud).astype(int)
 
     print(dilated_grid[:,:,1])
-    filtered_indices = [i for i, point in enumerate(filtered_points) if occupancy_grid[point[0]+grid_shift[0], point[1]+grid_shift[1], point[2]]==1]
+    filtered_indices = [i for i, point in enumerate(filtered_points) if dilated_grid[point[0]+grid_shift[0], point[1]+grid_shift[1], point[2]]==1]
 
     print(len(filtered_indices))
     # Return only the points not in the occupancy grid
+    
+    #visualize_voxel_grid_and_pointcloud(occupancy_grid, point_cloud)
     return point_cloud[filtered_indices]
 
 # Main function
