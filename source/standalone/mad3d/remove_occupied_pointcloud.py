@@ -7,7 +7,7 @@ import glob
 from scipy.ndimage import distance_transform_edt
 
 # Functions to be tested
-def filter_point_cloud(point_cloud, occupancy_grid, grid_shift=[10,10,0], grid_resolution=1):
+def filter_point_cloud(point_cloud, occupancy_grid, grid_shift=(10,10,0)):
     """
     Filters out points in the point cloud that are within the occupancy grid.
 
