@@ -589,7 +589,7 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     # Check visibility for each face
     for i, face in enumerate(faces):
         dot_product = torch.sum(rays_norm * face, dim=-1)
-        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0
+        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0.1736 # this is around 80 degree
     
     #print(face_grid)
     #print(face_grid.shape)

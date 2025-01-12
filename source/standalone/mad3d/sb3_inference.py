@@ -194,19 +194,23 @@ def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, 
                         # If no translate op found, add it
                         xform.AddTranslateOp().Set(cube_pos)
 
-def proximity_metric(acc_points, pcd_gt, thres=0.01):
+
+def point_coverage_ratio(acc_points, pcd_gt, thres=0.01):
     # Compute pairwise distances between acc_points and pcd_gt
     distances = torch.cdist(acc_points, pcd_gt, p=2)
-    
-    # Find the minimum distance for each point in acc_points
-    min_distances, _ = torch.min(distances, dim=1)
-    
-    # Count the number of points within distance thres
-    close_points = (min_distances <= thres).sum().item()
-    
-    # Compute the ratio
-    ratio = close_points / acc_points.shape[0]
-    return ratio
+
+    # Mark points in pcd_gt within thres as covered
+    occupied_mask = (distances <= thres).any(dim=0)
+
+    # Compute the number of covered points
+    num_occupied = occupied_mask.sum().item()
+
+    # Compute the coverage ratio
+    total_gt_points = pcd_gt.shape[0]
+    coverage_ratio = num_occupied / total_gt_points
+
+    return coverage_ratio
+
 
 # Compute Chamfer Distance
 def chamfer_distance(pcd1, pcd2):
@@ -274,8 +278,13 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     occ_gt = torch.tensor(np.load(hollow_occ_path))
 
     # ground truth pcd
-    # TODO: update
-    pcd_gt = torch.rand((10000, 3), dtype=torch.float32)  # Replace `m` with the number of points
+    # Load the PLY file using Open3D
+    pcd = o3d.io.read_point_cloud(gt_pcd_path)
+    # Convert the point cloud to a NumPy array
+    pcd_np = np.asarray(pcd.points)  # Shape: (n_points, 3)
+    # Convert the NumPy array to a PyTorch tensor
+    pcd_gt = torch.tensor(pcd_np, dtype=torch.float32)
+    print(pcd_gt.shape)
 
     # save path
     save_img_folder = os.path.join(os.path.dirname(args_cli.checkpoint), f"{dataset_name}_data")
@@ -346,15 +355,24 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         # pcd
         valid_points = points_3d_world[mask].reshape(-1, 3).cpu().numpy()
         valid_colors = torch.transpose(rgb_image[0], 0, 1)[mask.reshape(CAMERA_HEIGHT, CAMERA_WIDTH)].reshape(-1, 3).cpu().numpy()
+
+        floor_mask = valid_points[:, 2]>(env_size/grid_size)
+        valid_points = valid_points[floor_mask]
+        valid_colors = valid_colors[floor_mask]
+
+        floor_mask = pcd_gt[:, 2]>(env_size/grid_size)
+        pcd_gt = pcd_gt[floor_mask]
+
         # Append valid points and colors to lists
         all_points.append(valid_points)
         all_colors.append(valid_colors)
         acc_points = np.vstack(all_points)
+        # this may make cd and point cv decrease
         acc_points = subsample_point_cloud(torch.tensor(acc_points), 100000)
         cd = chamfer_distance(acc_points, pcd_gt).item()
         cd_rec[scene_id, index] = cd
         print("CD:", cd)
-        accuracy = proximity_metric(acc_points, pcd_gt, 3.)
+        accuracy = point_coverage_ratio(acc_points, pcd_gt, 0.1)
         acc_rec[scene_id, index] = accuracy
         print("Acc:", accuracy)
 
@@ -519,9 +537,9 @@ def process_action(actions):
     target_orientation = rot_utils.euler_angles_to_quats(torch.cat([torch.zeros(yaw.shape[0],1), pitch_radians.unsqueeze(1).cpu(), yaw.cpu().unsqueeze(1)],dim=1).numpy(), degrees=False)
     # setup camera position
     orientation_camera = convert_camera_frame_orientation_convention(torch.tensor(target_orientation).float(), origin="world", target="ros") 
-    x_new = real_xyz[:, 0] + CAMERA_OFFSET[0] * torch.cos(_yaw) - CAMERA_OFFSET[1] * torch.sin(_yaw)
-    y_new = real_xyz[:, 1] + CAMERA_OFFSET[0] * torch.sin(_yaw) + CAMERA_OFFSET[1] * torch.cos(_yaw)
-    z_new = real_xyz[:, 2] + CAMERA_OFFSET[2]
+    x_new = _xyz[:, 0] + CAMERA_OFFSET[0] * torch.cos(_yaw) - CAMERA_OFFSET[1] * torch.sin(_yaw)
+    y_new = _xyz[:, 1] + CAMERA_OFFSET[0] * torch.sin(_yaw) + CAMERA_OFFSET[1] * torch.cos(_yaw)
+    z_new = _xyz[:, 2] + CAMERA_OFFSET[2]
 
     new_positions = torch.stack([x_new, y_new, z_new], dim=1)
 
@@ -643,10 +661,12 @@ def main():
                     faces_path = os.path.join(directory, "faces.npy")
                     fill_occ_set_path = os.path.join(directory, "fill_occ_set.pkl")
 
+                    pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD_RF'), "*.ply"))[0]
+
                     # Ensure the required files exist
                     if usd_files and os.path.exists(faces_path) and os.path.exists(fill_occ_set_path):
                         #scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, UsdFileCfg(usd_path=usd_files[0])))
-                        scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path))
+                        scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, pcd_path))
     
     # coverage ratio record
     coverage_ratio_rec = np.zeros((len(scene_paths), NUM_STEPS), dtype=np.float32)
@@ -674,8 +694,8 @@ def main():
         update_period=sim_dt,  # Update every physical step
         data_types=["distance_to_image_plane","rgb"],
         spawn=sim_utils.PinholeCameraCfg(
-                focal_length=24., # in mm 13.8
-                horizontal_aperture=21., # in mm 24
+                focal_length=13.8, # in mm 13.8
+                horizontal_aperture=24., # in mm 24
                 clipping_range=(0.01, 60.0) # near and far plane in meter
             ),
         width=CAMERA_WIDTH,
@@ -686,7 +706,7 @@ def main():
 
 
     # start scan the shapes
-    for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path) in enumerate(scene_paths):
+    for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path, pcd_path) in enumerate(scene_paths):
         print(f"{i}: {scene_path}")
         
         dataset_name = os.path.basename(os.path.dirname(os.path.dirname(args_cli.input)))
@@ -705,7 +725,7 @@ def main():
         world.reset()
 
         # TODO: update this
-        gt_pcd_path = None
+        gt_pcd_path = pcd_path
         run_simulator(world, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, i, len(scene_paths), dataset_name)
 
         # remove building

@@ -50,7 +50,7 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
     # Step 2: Apply 3D max pooling to find neighbors
     pooled = F.max_pool3d(high_value_mask.unsqueeze(1), kernel_size=3, stride=1, padding=1)
     # Step 3: Create a neighbor mask by excluding the original high-value voxels
-    neighbor_mask = (pooled.squeeze(1) > 0) & (prob_grid < threshold)
+    neighbor_mask = (pooled.squeeze(1) > 0) & (prob_grid < 0.6)
     # Step 4: Update the prob_grid by setting identified neighbor voxels to 0.5
     prob_grid[neighbor_mask] = 0.5
 
