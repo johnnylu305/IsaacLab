@@ -200,7 +200,6 @@ class PPO_Cus(OnPolicyAlgorithmCus):
         if self.clip_range_vf is not None:
             clip_range_vf = self.clip_range_vf(self._current_progress_remaining)  # type: ignore[operator]
 
-        aux_center_losses = []
         entropy_losses = []
         aux_off_losses = []
         pg_losses, value_losses = [], []
@@ -219,7 +218,7 @@ class PPO_Cus(OnPolicyAlgorithmCus):
                     actions = rollout_data.actions.long().flatten()
 
                 # take xyz from new weight instead of rollout buffer
-                values, log_prob, entropy, xyz, off, gt_off = self.policy.evaluate_actions(rollout_data.observations, actions)
+                values, log_prob, entropy, off, gt_off = self.policy.evaluate_actions(rollout_data.observations, actions)
                 values = values.flatten()
                 # Normalize advantage
                 advantages = rollout_data.advantages
@@ -267,14 +266,7 @@ class PPO_Cus(OnPolicyAlgorithmCus):
                 aux_off_losses.append(aux_off_loss.detach().cpu().numpy())
 
 
-                center = rollout_data.observations["aux_center"]
-
-                aux_center_loss = th.mean((xyz - center)**2)
-
-                aux_center_losses.append(aux_center_loss.detach().cpu().numpy())
-
-
-                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss + aux_off_loss*0.5 + aux_center_loss
+                loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss + aux_off_loss*0.5
 
                 # Calculate approximate form of reverse KL Divergence for early stopping
                 # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
@@ -306,7 +298,6 @@ class PPO_Cus(OnPolicyAlgorithmCus):
 
         # Logs
         self.logger.record("train/aux_off_loss", np.mean(aux_off_losses))
-        self.logger.record("train/aux_center_loss", np.mean(aux_center_losses))
         self.logger.record("train/entropy_loss", np.mean(entropy_losses))
         self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
         self.logger.record("train/value_loss", np.mean(value_losses))

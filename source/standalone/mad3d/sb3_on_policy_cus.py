@@ -371,11 +371,10 @@ class OnPolicyAlgorithmCus(BaseAlgorithm):
             with th.no_grad():
                 # Convert to pytorch tensor or to TensorDict
                 obs_tensor = obs_as_tensor(self._last_obs, self.device)
-                actions, values, log_probs, xyz, real_actions, off = self.policy(obs_tensor)
+                actions, values, log_probs, real_actions, off = self.policy(obs_tensor)
             actions = actions.cpu().numpy()
             if real_actions is not None:
                 real_actions = real_actions.cpu().numpy()
-            xyz = xyz.cpu().numpy()
 
             # Rescale and perform action
             clipped_actions = actions
@@ -389,10 +388,8 @@ class OnPolicyAlgorithmCus(BaseAlgorithm):
                     # Otherwise, clip the actions to avoid out of bound error
                     # as we are sampling from an unbounded Gaussian distribution
                     clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
-            if real_actions is not None:
-                actions_with_xyz = np.concatenate([clipped_actions, xyz, real_actions], axis=1)
-            else:
-                actions_with_xyz = np.concatenate([clipped_actions, xyz], axis=1)
+            actions_with_xyz = np.concatenate([clipped_actions, real_actions], axis=1)
+            
             new_obs, rewards, dones, infos = env.step(actions_with_xyz) #(clipped_actions)
 
             self.num_timesteps += env.num_envs

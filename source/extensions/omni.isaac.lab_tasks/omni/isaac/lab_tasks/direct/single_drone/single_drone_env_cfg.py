@@ -18,7 +18,7 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_obja_final_lrsch'
+CAMERA_FOLDER = 'camera_image_nohirech'
 
 
 # define crazyflie
@@ -86,7 +86,7 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     num_envs = 2 # this might be overwrote by parser
 
     # rl
-    num_actions = 3 # x, y, z
+    num_actions = 5 # x, y, z
     used_nearest = USED_NEAREST
     num_states = 0 
     episode_length_s = 20000 # timeout

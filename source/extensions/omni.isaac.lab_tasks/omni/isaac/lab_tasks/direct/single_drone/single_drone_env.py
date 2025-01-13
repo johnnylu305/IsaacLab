@@ -270,29 +270,17 @@ class MAD3DEnv(DirectRLEnv):
         self.env_step += 1
 
         # action
-        # N, 9 (nearnest free xyz, look at xyz, real xyz)
+        # N, 9 (nearnest free xyz, pitch, yaw)
         self._actions = actions.clone()
         self._xyz = self._actions[:, :3]
         self._xyz = (self._xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
 
-        if self.cfg.used_nearest:
-            self.real_xyz = self._actions[:, 6:9]
-            self.real_xyz = (self.real_xyz + torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
-
-        # 0~1
-        self.lookatxyz = self._actions[:, 3:6]
-        # -1~1
-        self.lookatxyz = self.lookatxyz*2-1
-        # to real-world xyz
-        self.lookatxyz = (self.lookatxyz+torch.tensor([0., 0., 1.]).to(self.device)) * torch.tensor([self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3, self.cfg.env_size/2.0-1e-3]).to(self.device)
-        # compute yaw and pitch
-        dxyz = self.lookatxyz - self._xyz + 1e-6
         # calculate yaw using torch functions
         # -pi~pi
-        self._yaw = torch.atan2(dxyz[:, 1], dxyz[:, 0])
+        self._yaw = self._actions[:, 4]
         # calculate pitch using torch functions
         # -pi/2~pi/2
-        self._pitch = torch.atan2(dxyz[:, 2], torch.sqrt(dxyz[:, 0]**2 + dxyz[:, 1]**2))
+        self._pitch = self._actions[:, 3]
         # to positive: downward, negative: upward
         self._pitch *= -1
         # normalize pitch as specified
@@ -483,7 +471,7 @@ class MAD3DEnv(DirectRLEnv):
                 os.makedirs(root_path, exist_ok=True)
                 x, y, z = self.obv_pose_history[i, self.env_step[i].int(), :3] * self.cfg.env_size
                 cv = self.coverage_ratio[i, 0]
-                lx, ly, lz = self.lookatxyz[i]
+                lx, ly, lz = 0, 0, 0
                 base_name = f'{self.env_step[i].long()}_{x:.1f}_{y:.1f}_{z:.1f}_{cv:.3f}_{self.face_ratio[i][0]:.3f}_{self.not_free[i]}_{self.not_height[i]}_{self.real_xyz[i][0]:.3f}_{self.real_xyz[i][1]:.3f}_{self.real_xyz[i][2]:.3f}_{self.h_limit[i]}_{self.robot_ori[i, 0]:.2f}_{lx:.1f}_{ly:.1f}_{lz:.1f}.png'
                 plt.imsave(os.path.join(root_path, f'{i}_depth_'+base_name),
                            np.clip(depth_image[i].detach().cpu().numpy(),0,self.cfg.env_size).astype(np.uint8),

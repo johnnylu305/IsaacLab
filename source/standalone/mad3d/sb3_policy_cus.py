@@ -40,7 +40,8 @@ SelfBaseModel = TypeVar("SelfBaseModel", bound="BaseModel")
 
 
 def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
-    
+   
+
     num_env, n, _, _ = prob_grid.shape
     device = prob_grid.device
 
@@ -57,7 +58,7 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
     # Convert actions to world coordinates
     action_scale_factors = th.tensor([env_size/2.0-1e-3, env_size/2.0-1e-3, env_size/2.0-1e-3]).to(device)
     action_offset = th.tensor([0., 0., 1.]).to(device)
-    world_actions = (actions + action_offset) * action_scale_factors
+    world_actions = (actions[:, :3] + action_offset) * action_scale_factors
 
     # Generate world coordinate range for voxel grid
     x_coords = th.linspace(-env_size/2, env_size/2, n, device=device)
@@ -102,7 +103,9 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
     # Convert new_world_actions back to [-1, 1] range in voxel space
     new_actions = (new_world_actions / action_scale_factors) - action_offset
 
-    return new_actions
+    actions[:, :3] = new_actions
+
+    return actions
 
 
 class BaseModel(nn.Module):
@@ -719,7 +722,7 @@ class ActorCriticPolicyCus(BasePolicy):
         features = self.extract_features(obs)
         if self.share_features_extractor:
             # our mlp_extractor will return these things
-            latent_pi, latent_vf, xyz, off = self.mlp_extractor(features)
+            latent_pi, latent_vf, off = self.mlp_extractor(features)
         else:
             pi_features, vf_features = features
             latent_pi = self.mlp_extractor.forward_actor(pi_features)
@@ -739,7 +742,7 @@ class ActorCriticPolicyCus(BasePolicy):
             real_actions = actions
             actions = get_constraint_actions(prob_grid, actions, obs["pose_step"][:, 5], threshold=0.5, env_size=obs["env_size"][0, 0])
 
-        return actions, values, log_prob, xyz, real_actions, off
+        return actions, values, log_prob, real_actions, off
 
     def extract_features(  # type: ignore[override]
         self, obs: PyTorchObs, features_extractor: Optional[BaseFeaturesExtractor] = None
@@ -799,7 +802,7 @@ class ActorCriticPolicyCus(BasePolicy):
         """
         # Preprocess the observation if needed
         features = self.extract_features(observation)
-        latent_pi, latent_vf, xyz, off = self.mlp_extractor(features)
+        latent_pi, latent_vf, off = self.mlp_extractor(features)
         distribution = self._get_action_dist_from_latent(latent_pi)
 
         # constraint actions to the nearest actions if needed
@@ -813,7 +816,7 @@ class ActorCriticPolicyCus(BasePolicy):
             real_actions = actions
             actions = get_constraint_actions(prob_grid, actions, observation["pose_step"][:, 5], threshold=0.5, env_size=observation["env_size"][0, 0]).detach()
 
-        return actions, xyz, real_actions
+        return actions, real_actions
 
     # overwrite original predict
     def predict(
@@ -853,14 +856,13 @@ class ActorCriticPolicyCus(BasePolicy):
         obs_tensor, vectorized_env = self.obs_to_tensor(observation)
 
         with th.no_grad():
-            actions, xyz, real_actions = self._predict(obs_tensor, deterministic=deterministic)
+            actions, real_actions = self._predict(obs_tensor, deterministic=deterministic)
         
         # Convert to numpy, and reshape to the original action shape
         actions = actions.cpu().numpy().reshape((-1, *self.action_space.shape))  # type: ignore[misc, assignment]
 
         if real_actions is not None:
             real_actions = real_actions.cpu().numpy()
-        xyz = xyz.cpu().numpy()
 
         if isinstance(self.action_space, spaces.Box):
             if self.squash_output:
@@ -871,11 +873,8 @@ class ActorCriticPolicyCus(BasePolicy):
                 # out of bound error (e.g. if sampling from a Gaussian distribution)
                 actions = np.clip(actions, self.action_space.low, self.action_space.high)  # type: ignore[assignment, arg-type]
 
-        if real_actions is not None:
-            actions_with_xyz = np.concatenate([actions, xyz, real_actions], axis=1)
-        else:
-            actions_with_xyz = np.concatenate([actions, xyz], axis=1)
-
+        actions_with_xyz = np.concatenate([actions, real_actions], axis=1)
+        
         # Remove batch dimension if needed
         if not vectorized_env:
             assert isinstance(actions, np.ndarray)
@@ -897,7 +896,7 @@ class ActorCriticPolicyCus(BasePolicy):
         features = self.extract_features(obs)
         if self.share_features_extractor:
             # our mlp_extractor will return these
-            latent_pi, latent_vf, xyz, off = self.mlp_extractor(features)
+            latent_pi, latent_vf, off = self.mlp_extractor(features)
         else:
             pi_features, vf_features = features
             latent_pi = self.mlp_extractor.forward_actor(pi_features)
@@ -919,7 +918,7 @@ class ActorCriticPolicyCus(BasePolicy):
             actions = get_constraint_actions(prob_grid, actions, obs["pose_step"][:, 5], threshold=0.5, env_size=obs["env_size"][0, 0]).detach()
             gt_off = (actions-real_actions).detach()
 
-        return values, log_prob, entropy, xyz, off, gt_off
+        return values, log_prob, entropy, off, gt_off
 
     def get_distribution(self, obs: PyTorchObs) -> Distribution:
         """
@@ -1152,20 +1151,10 @@ class CusMlpExtractor(nn.Module):
         :return: latent_policy, latent_value of the specified network.
             If all layers are shared, then ``latent_policy == latent_value``
         """
-        if isinstance(features, list):
-            xyz = features[1]
-        else:
-            xyz = None
-        return self.forward_actor(features), self.forward_critic(features), xyz, self.off_net(features[0])
+        return self.forward_actor(features), self.forward_critic(features), self.off_net(features[0])
 
     def forward_actor(self, features: th.Tensor) -> th.Tensor:
-        if isinstance(features, list):
-            xyz = features[1]
-            features = features[0]
         return self.policy_net(features)
 
     def forward_critic(self, features: th.Tensor) -> th.Tensor:
-        if isinstance(features, list):
-            xyz = features[1]
-            features = features[0]
         return self.value_net(features)
