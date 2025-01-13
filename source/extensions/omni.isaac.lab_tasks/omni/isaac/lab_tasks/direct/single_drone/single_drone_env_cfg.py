@@ -18,7 +18,7 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_obja_newcamera2421_newface45'
+CAMERA_FOLDER = 'camera_image_envsize20_obja_final_lrsch'
 
 
 # define crazyflie
@@ -76,8 +76,8 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     # randomly translate the object
     random_trans_obj = True
     # x, y translation range in meter
-    trans_obj_x = [-5, 5] #[-2, 2] 
-    trans_obj_y = [-5, 5] #[-2, 2]
+    trans_obj_x = [-4, 4] #[-2, 2] 
+    trans_obj_y = [-4, 4] #[-2, 2]
     
     # randomly sample n object
     random_sample_obj = True
@@ -150,9 +150,9 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
         update_period=0, # update every physical step
         data_types=["rgb", "distance_to_image_plane"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24, # in cm default 24, dji 13.8
+            focal_length=13.8, # in cm default 24, dji 13.8
             #focus_distance=1.0, # in m 
-            horizontal_aperture=21., # in mm 
+            horizontal_aperture=24., # in mm 
             clipping_range=(0.1, 60.0) # near and far plane in meter
         ),
         width=camera_w,

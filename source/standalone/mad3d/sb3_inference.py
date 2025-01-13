@@ -48,14 +48,15 @@ from sb3_ppo_cus import PPO_Cus
 
 
 # Env
-NUM_STEPS = 15
+NUM_STEPS = 20 #15
 NUM_ENVS = 1
 GRID_SIZE = 20
 ENV_SIZE = 20
+TRANS = [-4, -4, 0]
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CAMERA_OFFSET = [0.1, 0, 0]
 # camera initial position
-INITIAL_POSE = [10, 10, 2]
+INITIAL_POSE = [5, 5, 10] #[10, 10, 2]
 # Sensor"
 CAMERA_HEIGHT = 900 #600
 CAMERA_WIDTH = 900 #600
@@ -276,6 +277,21 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
 
     # ground truth
     occ_gt = torch.tensor(np.load(hollow_occ_path))
+    shifted_occ_gt = torch.zeros(occ_gt.shape)
+    for x in range(grid_size):
+        for y in range(grid_size):
+            for z in range(grid_size):
+                # Calculate the new coordinates after applying TRANS
+                new_x = x + TRANS[0]
+                new_y = y + TRANS[1]
+                new_z = z + TRANS[2]
+
+                # Check if the new coordinates are within the bounds of the grid
+                if 0 <= new_x < grid_size and 0 <= new_y < grid_size and 0 <= new_z < grid_size:
+                    # Shift the value to the new coordinates
+                    shifted_occ_gt[new_x, new_y, new_z] = occ_gt[x, y, z]
+
+    occ_gt = shifted_occ_gt
 
     # ground truth pcd
     # Load the PLY file using Open3D
@@ -284,6 +300,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     pcd_np = np.asarray(pcd.points)  # Shape: (n_points, 3)
     # Convert the NumPy array to a PyTorch tensor
     pcd_gt = torch.tensor(pcd_np, dtype=torch.float32)
+    pcd_gt = pcd_gt + torch.tensor([TRANS])
     print(pcd_gt.shape)
 
     # save path
@@ -557,7 +574,7 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     # Check visibility for each face
     for i, face in enumerate(faces):
         dot_product = torch.sum(rays_norm * face, dim=-1)
-        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0
+        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0.1736
 
     return face_grid
 
@@ -715,7 +732,7 @@ def main():
         scene_prim_root=f"/World/Scene_{i}"
         scene = add_reference_to_stage(usd_path=scene_path, prim_path=scene_prim_root)
         # define the property of the stage
-        scene_prim = XFormPrim(prim_path=scene_prim_root, name=f"Scene_{i}", translation=[0, 0, 0])
+        scene_prim = XFormPrim(prim_path=scene_prim_root, name=f"Scene_{i}", translation=TRANS)
         # activate the stage
         world.scene.add(scene_prim)
         scene_prim_path = scene_prim.prim_path
