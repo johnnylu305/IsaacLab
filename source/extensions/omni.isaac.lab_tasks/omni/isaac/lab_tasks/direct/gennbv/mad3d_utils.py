@@ -366,7 +366,10 @@ def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size,
     x = np.floor(x/cell_size).astype(np.int32)
     y = np.floor(y/cell_size).astype(np.int32)
     z = np.floor(z/slice_height).astype(np.int32)
+    if z == 0:
+        z = 1
     #z = np.ceil(z/slice_height).astype(np.int32)
+
     #col = (z, x, y) in occs[env_ids]
     col = (x, y, z) in occs[env_ids]
     #print(f"Env: {env_ids} Map zxy: {z_} {x_} {y_} to voxel_zxy: {z} {x} {y}, Col: {col}")

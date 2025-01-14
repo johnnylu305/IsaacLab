@@ -5,58 +5,6 @@ from omni.isaac.core.utils.prims import get_prim_at_path
 from pxr import UsdGeom, Usd, Gf, Sdf
 import open3d as o3d
 
-
-def compute_weighted_centroid(obv_occ, gt_occ):
-    """
-    Compute the weighted centroid of XYZ from gt_occ, ignoring faces already observed in obv_occ.
-
-    Parameters:
-        obv_occ (torch.Tensor): Observed occupancy grid of shape [n_envs, grid_x, grid_y, grid_z, 6].
-        gt_occ (torch.Tensor): Ground truth occupancy grid of shape [n_envs, grid_x, grid_y, grid_z, 6].
-
-    Returns:
-        torch.Tensor: Weighted centroid of shape [n_envs, 3].
-    """
-    # Validate inputs
-    assert obv_occ.shape == gt_occ.shape, "obv_occ and gt_occ must have the same shape"
-    assert obv_occ.ndim == 5 and obv_occ.shape[-1] == 6, "Input dimensions must match [n_envs, grid_x, grid_y, grid_z, 6]"
-
-    n_envs, grid_x, grid_y, grid_z, _ = obv_occ.shape
-
-    # Mask gt_occ to ignore faces already observed in obv_occ
-    valid_occ = gt_occ * (1 - obv_occ)
-
-    # Compute the weights for each voxel (sum of valid faces)
-    weights = torch.sum(valid_occ, dim=-1)
-
-    # Create a grid of XYZ coordinates
-    x_coords, y_coords, z_coords = torch.meshgrid(
-        torch.arange(grid_x, device=obv_occ.device),
-        torch.arange(grid_y, device=obv_occ.device),
-        torch.arange(grid_z, device=obv_occ.device),
-        indexing="ij"
-    )
-
-    # Expand coordinates to match the shape of weights
-    x_coords = x_coords.unsqueeze(0).float()  # Shape [1, grid_x, grid_y, grid_z]
-    y_coords = y_coords.unsqueeze(0).float()  # Shape [1, grid_x, grid_y, grid_z]
-    z_coords = z_coords.unsqueeze(0).float()  # Shape [1, grid_x, grid_y, grid_z]
-
-    # Compute weighted sums for each axis
-    total_weights = torch.sum(weights, dim=(1, 2, 3), keepdim=True)
-    total_weights = torch.clamp(total_weights, min=1e-6)  # Avoid division by zero
-
-    weighted_x = torch.sum(weights * x_coords, dim=(1, 2, 3)) / total_weights.squeeze()
-    weighted_y = torch.sum(weights * y_coords, dim=(1, 2, 3)) / total_weights.squeeze()
-    weighted_z = torch.sum(weights * z_coords, dim=(1, 2, 3)) / total_weights.squeeze()
-
-    # Combine weighted coordinates into centroids
-    centroids = torch.stack((weighted_x, weighted_y, weighted_z), dim=-1)
-
-    return centroids
-
-
-
 def merge_point_clouds(pc1, pc2):
     if np.asarray(pc1.points).shape[0] == 0:
         return pc2
@@ -254,7 +202,7 @@ class OccupancyGrid:
         """
         Trace the path from the camera to each point using Bresenham's algorithm and update the grid.
         """
-        camera_position = torch.tensor(camera_position).cuda()
+        camera_position = camera_position.clone().detach()
 
         end_pts = (camera_position).unsqueeze(0).long()
 
@@ -350,7 +298,7 @@ def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size,
     # remove offset
    
     xyz -= env_origins[env_ids]
-
+    
     x, y, z = xyz.detach().cpu().numpy()
 
     x_, y_, z_ = x, y, z
@@ -361,64 +309,14 @@ def check_building_collision(occs, xyz, env_ids, org_x, org_y, org_z, cell_size,
     z += org_z
 
     # to voxel id
-    # TODO: this may have bug at boundary
-    # we should try x/env_size*(grid_size-1)? or clamping
     x = np.floor(x/cell_size).astype(np.int32)
     y = np.floor(y/cell_size).astype(np.int32)
     z = np.floor(z/slice_height).astype(np.int32)
-    #z = np.ceil(z/slice_height).astype(np.int32)
+
     #col = (z, x, y) in occs[env_ids]
     col = (x, y, z) in occs[env_ids]
     #print(f"Env: {env_ids} Map zxy: {z_} {x_} {y_} to voxel_zxy: {z} {x} {y}, Col: {col}")
     return col
-
-
-def check_free(occs, xyz, env_ids, org_x, org_y, org_z, cell_size, slice_height, env_origins, shift=True):
-    # remove offset
-
-    if shift:
-        xyz -= env_origins[env_ids]
-
-    x, y, z = xyz.detach().cpu().numpy()
-
-    x_, y_, z_ = x, y, z
-
-    # smallest point to (0, 0, 0)
-    x += org_x
-    y += org_y
-    z += org_z
-
-    # to voxel id
-    # TODO: this may have bug at boundary
-    # we should try x/env_size*(grid_size-1)? or clamping
-    x = np.floor(x/cell_size).astype(np.int32)
-    y = np.floor(y/cell_size).astype(np.int32)
-    z = np.floor(z/slice_height).astype(np.int32)
-
-    not_free = occs[x, y, z] >= 0.5
-
-    return not_free
-
-
-def check_height(hlimit, xyz, env_ids, org_z, cell_size, slice_height, env_origins, shift=True):
-    # remove offset
-
-    if shift:
-        xyz -= env_origins[env_ids]
-
-    x, y, z = xyz.detach().cpu().numpy()
-
-    x_, y_, z_ = x, y, z
-
-    z += org_z
-
-    # to voxel id
-    z = np.floor(z/slice_height).astype(np.int32)
-
-    not_height = z > hlimit
-
-    return not_height
-
 
 def get_robot_scale(robot_prim_root, desired_max_size):
     crazyflie_prim = get_prim_at_path(prim_path=robot_prim_root)
@@ -541,7 +439,7 @@ def create_blocks_from_occ_list(env_id, env_origin, occ_set, cell_size, slice_he
     i = 0
     for (x, y, z) in occ_set:
         # Calculate position based on cell coordinates
-        cube_pos = Gf.Vec3f((x*cell_size)-env_size/2.+env_origin[0], (y*cell_size)-env_size/2.+env_origin[1], slice_height*z-env_size)
+        cube_pos = Gf.Vec3f((x*cell_size)-env_size/2.+env_origin[0], (y*cell_size)-env_size/2.+env_origin[1], slice_height*z-20)
 
         #cube_pos = Gf.Vec3f((x*cell_size), (y*cell_size), slice_height*z)
 
@@ -581,7 +479,7 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     rays = camera_xyz - occ_grid_xyz
     
     # Normalize rays
-    rays_norm = rays / (torch.norm(rays, dim=-1, keepdim=True)+1e-10)
+    rays_norm = rays / torch.norm(rays, dim=-1, keepdim=True)+1e-10
     
     faces = torch.tensor([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=torch.float32).to(device)
     face_grid = torch.zeros((grid_size, grid_size, grid_size, 6), dtype=torch.bool).to(device)
@@ -595,128 +493,3 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     #print(face_grid.shape)
     #exit()
     return face_grid
-
-def remove_occluded_face(grid_size, obv_grid, face_grid, device):
-
-    faces = torch.tensor([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=torch.float32).to(device)
-
-
-    face_grid_bool = face_grid.bool()
-    # Mask out faces where the obv_grid is non-occupied (obv_grid == 0)
-    non_occupied_mask = obv_grid == 0
-    face_grid_bool[non_occupied_mask.unsqueeze(-1).expand(-1, -1, -1, -1, 6)] = False
-
-    # remove occluded face
-    # Identify visible faces in the grid
-    visible_indices = torch.nonzero(face_grid_bool, as_tuple=True)
-
-    # Get indices and directions for occupied voxels
-    env_idx, x, y, z, face_idx = visible_indices
-
-    # Shift directions based on face index to find adjacent voxel positions
-    shifts = faces[face_idx]  # Extract the shift for each visible face
-    adj_x = x + shifts[:, 0].long()
-    adj_y = y + shifts[:, 1].long()
-    adj_z = z + shifts[:, 2].long()
-
-    # Ensure adjacent positions are within bounds
-    valid_mask = (
-        (adj_x >= 0) & (adj_x < grid_size) &
-        (adj_y >= 0) & (adj_y < grid_size) &
-        (adj_z >= 0) & (adj_z < grid_size)
-    )
-    env_idx = env_idx[valid_mask]
-    x, y, z = x[valid_mask], y[valid_mask], z[valid_mask]
-    adj_x = adj_x[valid_mask]
-    adj_y = adj_y[valid_mask]
-    adj_z = adj_z[valid_mask]
-    face_idx = face_idx[valid_mask]
-
-    # Check if the adjacent voxel is occupied, making the face occluded
-    occluded_mask = obv_grid[env_idx, adj_x, adj_y, adj_z] == 1
-
-    face_grid_bool = face_grid_bool.bool()
-
-    # Update the face_grid to mark occluded faces as False
-    face_grid_bool[env_idx, x, y, z, face_idx] = ~occluded_mask 
-    
-    return face_grid_bool
-
-def compute_distance_to_center_distance(fg_masks, w, h):
-    image_center = torch.tensor([w / 2, h / 2], device=fg_masks.device)
-    max_distance = torch.norm(image_center)
-
-    # Initialize a list to store centroids
-    centroids = []
-
-    # Loop through each mask in the batch
-    for i in range(fg_masks.size(0)):
-        # Get the non-zero coordinates for the current mask
-        y_coords, x_coords = torch.nonzero(fg_masks[i], as_tuple=True)
-
-        if y_coords.numel() == 0:  # If there are no foreground pixels
-            centroids.append(torch.tensor([w, h], device=fg_masks.device))
-        else:
-            # Compute the centroid by averaging the non-zero coordinates
-            y_mean = y_coords.float().mean()
-            x_mean = x_coords.float().mean()
-            centroids.append(torch.tensor([y_mean, x_mean], device=fg_masks.device))
-
-    # Convert the centroids list into a tensor
-    centroids = torch.stack(centroids)
-
-    # Calculate the Euclidean distance from each centroid to the image center
-    distances = torch.norm(centroids - image_center, dim=1)
-
-    return distances / max_distance
-
-
-def shift_gt_occs(gt_occs, txyz, grid_sizes, env_sizes):
-    # Calculate the scaling factor from environment to grid for each axis
-    scale_factors = grid_sizes / env_sizes  # Assuming element-wise division
-
-    # Convert translation from environment to grid coordinates
-    tx, ty, tz = (txyz * scale_factors).int()
-
-
-    # Apply torch.roll on each axis (x, y, z) for the current environment
-    gt_occs = torch.roll(gt_occs, shifts=(tx, ty, tz), dims=(0, 1, 2))
-
-    return gt_occs
-
-
-def shift_gt_faces(gt_faces, txyz, grid_sizes, env_sizes):
-    # Calculate the scaling factor from environment to grid for each axis
-    scale_factors = grid_sizes / env_sizes  # Assuming element-wise division
-
-    # Convert translation from environment to grid coordinates
-    tx, ty, tz = (txyz * scale_factors).int()
-
-    # Apply torch.roll on each axis (x, y, z) for the current environment
-    # Note: dims=(0, 1, 2) excludes the last dimension for faces
-    gt_faces = torch.roll(gt_faces, shifts=(tx, ty, tz), dims=(0, 1, 2))
-
-    return gt_faces
-
-
-def shift_occs(occs, txyz, grid_sizes, env_sizes):
-    # Convert the set of (x, y, z) coordinates into a NumPy array
-    occs_array = np.array(list(occs), dtype=int)
-
-    # Calculate the scaling factor from environment to grid for each axis
-    scale_factors = grid_sizes / env_sizes  # Assuming element-wise division
-
-    # Convert translation from environment to grid coordinates
-    txyz_scaled = (txyz * scale_factors).cpu().int().numpy()
-
-    # Apply the translation only where z > 0
-    shifted_occs_array = np.where(
-        occs_array[:, 2:] > 0,  # Check if z > 0
-        occs_array + txyz_scaled,  # Apply the translation
-        occs_array  # Keep original coordinates if z <= 0
-    )
-
-    # Convert the result back to a set of tuples
-    shifted_occs_set = set(map(tuple, shifted_occs_array))
-
-    return shifted_occs_set

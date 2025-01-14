@@ -27,7 +27,8 @@ import sys
 sys.path.append('./')
 from stable_baselines3.common.utils import constant_fn
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv, VecEnvObs, VecEnvStepReturn
-from source.standalone.mad3d.sb3_scanrl_encoder import CustomCombinedExtractor
+#from source.standalone.mad3d.sb3_scanrl_encoder import CustomCombinedExtractor
+from source.standalone.mad3d.sb3_gennbv_encoder import CustomCombinedExtractor
 from omni.isaac.lab.envs import DirectRLEnv, ManagerBasedRLEnv
 from stable_baselines3.common.policies import MultiInputActorCriticPolicy
 """
