@@ -1,3 +1,5 @@
+""" Load and display pre-trained model in OpenAI Gym Environment
+"""
 import argparse
 from omni.isaac.lab.app import AppLauncher
 
@@ -17,8 +19,8 @@ args_cli = parser.parse_args()
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-import os
 import glob
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -42,16 +44,36 @@ from pxr import Sdf, UsdLux, UsdGeom, Gf, Usd
 from omni.isaac.lab.utils.math import convert_camera_frame_orientation_convention, euler_xyz_from_quat
 from omni.isaac.core.utils.prims import delete_prim
 
-from stable_baselines3.common.vec_env import VecNormalize
-sys.path.append("/home/hat/Documents/IsaacLab")
-#from sb3_ppo_cus import PPO_Cus
-from stable_baselines3 import PPO
+import math
+import os
+import sys
+import gym
+import argparse
+import numpy as np
+import pandas as pd
+import tensorflow as tf
 
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+#with tf.compat.v1.Session() as sess:
+import keras.backend as K
 
-#TRANS = [-4, -4, 0]
-#TRANS = [4, 4, 0]
-#TRANS = [4, -4, 0]
-TRANS = [-4 ,4, 0]
+from DDQN.ddqn import DDQN
+#from DDPG.ddpg import DDPG
+
+#from keras.backend.tensorflow_backend import set_session
+#from keras.utils import to_categorical
+
+#from utils.atari_environment import AtariEnvironment
+# from utils.continuous_environments import Environment
+#from utils.unreal_environments import Environment
+#from utils.networks import get_session
+#import gym_unrealcv
+
+# gym.logger.set_level(40)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+#import sys
+#sys.path.append('/home/hat/Documents/IsaacLab/source/standalone')
 # Env
 NUM_STEPS = 30
 NUM_ENVS = 1
@@ -64,10 +86,59 @@ INITIAL_POSE = [10, 10, 2]
 # Sensor"
 CAMERA_HEIGHT = 900 #600
 CAMERA_WIDTH = 900 #600
-TARGET_HEIGHT = 300
-TARGET_WIDTH = 300
-IMG_T=5
+TARGET_HEIGHT = 84
+TARGET_WIDTH = 84
+IMG_T=6
 TOTAL_IMAGES=100
+TRANS = [0 ,0, 0]
+
+#obv_imgs = torch.zeros((NUM_ENVS, IMG_T, TARGET_HEIGHT, TARGET_WIDTH, 3)).to(DEVICE)
+#DEVICE = '/gpu:0'  # Or '/cpu:0' based on your device
+
+# Create the tensor
+#with tf.device(DEVICE):
+obv_imgs = np.zeros((TARGET_HEIGHT, TARGET_WIDTH, IMG_T), dtype=np.float32)
+
+#https://github.com/darylperalta/gym-unrealcv/blob/d4d4eb771239123ba603788d32b629bc2ac24f9c/gym_unrealcv/envs/setting/depth_fusionB_keras_multHouse.json
+settings = {
+    "env_name": "unreal",
+    "env_bin": "mult_House/MyProject5/Binaries/Linux/MyProject5",
+    "cam_id": 0,
+    "height": 40,
+    "pitch": 0,
+    "maxsteps": 99,
+    "trigger_th": 0.6,
+    "reward_th": 0.1,
+    "reward_factor": 10,
+    "collision_th": 50,
+    "waypoint_th": 200,
+    "start_pose_rel":[0.0, 45.0, 125.0],
+    "targets": [
+        "SM_Door_39"
+    ],
+    "test_xy": [
+        [-106.195, 437.424],
+        [27.897, -162.437 ],
+        [10.832, 135.126  ],
+        [67.903, 26.995   ],
+        [-23.558, -187.354],
+        [-80.312, 254.579 ]
+    ],
+    "discrete_actions": [
+        [45, 0, 0],
+        [-45, 0, 0],
+        [0, 25, 0],
+        [0, -25, 0],
+        [0, 0, -0.25],
+        [0, 0, 0.25]
+
+    ],
+    "continous_actions": {
+        "high": [90, 45, 200],
+        "low":  [-90,  -45, -200]
+    }
+}
+
 
 def _bresenhamline_nslope(slope, device):
     scale = torch.amax(torch.abs(slope), dim=1).reshape(-1, 1)
@@ -134,7 +205,7 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
     world.scene.add_ground_plane(size=40.0, color=torch.tensor([52.0 / 255.0, 195.0 / 255.0, 235.0 / 255.0]))
     # light
     UsdLux.DomeLight.Define(world.scene.stage, Sdf.Path("/DomeLight")).CreateIntensityAttr(500)
-    
+
     # add usd into the stage
     scene = add_reference_to_stage(usd_path=scene_path, prim_path=scene_prim_root)
 
@@ -152,20 +223,19 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
         data_types=["distance_to_image_plane","rgb"],
         spawn=sim_utils.PinholeCameraCfg(
                 focal_length=13.8, # in cm default 24, dji 1.38
-                #focus_distance=1.0, # in m 
-                horizontal_aperture=24., # in mm 
+                #focus_distance=1.0, # in m
+                horizontal_aperture=24., # in mm
                 clipping_range=(0.01, 60.0) # near and far plane in meter
             ),
         width=CAMERA_WIDTH,
         height=CAMERA_HEIGHT
     )
- 
+
     scene_entities = {}
-    
+
     scene_entities[f"camera_0"] = Camera(cameraCfg)
 
     return scene_entities
-
 
 def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, base_height, z,env_size, target=0, h_off=60):
     stage = omni.usd.get_context().get_stage()
@@ -198,7 +268,6 @@ def create_blocks_from_occupancy(env_id, env_origin, occupancy_grid, cell_size, 
                     else:
                         # If no translate op found, add it
                         xform.AddTranslateOp().Set(cube_pos)
-
 
 def point_coverage_ratio(acc_points, pcd_gt, thres=0.01):
     # Compute pairwise distances between acc_points and pcd_gt
@@ -259,20 +328,132 @@ def farthest_point_sampling(pcd, num_samples):
 
     return pcd[sampled_indices]
 
+def _get_observations(obv_occ, rgb_image, pose, obv_imgs, obv_pose_history, step_num):
+    #import pdb; pdb.set_trace()
+    #obv_occ[:, :, :, :, 0] = probability_grid.clone()
+    #import pdb; pdb.set_trace()
+    pose[:, :3] /= ENV_SIZE
+    pose[:, 3:] /= 3.15
+    obv_pose_history[:,step_num,:] = pose
+    #print(obv_pose_history, step_num)
+    pose_step = obv_pose_history.reshape(NUM_ENVS, -1)
+    # occ: N, grid_size, grid_size, grid_size, occ + coordinate + face occ
+    #occ_face = torch.cat((self.obv_occ, self.obv_face), dim=-1)
+
+    print(rgb_image.shape)
+
+    resized_rgb_image = F.interpolate(rgb_image.permute(0, 3, 1, 2)/255.0, size=(TARGET_HEIGHT, TARGET_WIDTH), mode='bilinear', align_corners=False)
+    resized_rgb_image = resized_rgb_image.permute(0, 2, 3, 1)
+    #import pdb; pdb.set_trace()
+    for i in [0]:
+        obv_imgs[i][4] = obv_imgs[i][3]
+        obv_imgs[i][3] = obv_imgs[i][2]
+        obv_imgs[i][2] = obv_imgs[i][1]
+        obv_imgs[i][1] = obv_imgs[i][0]
+        obv_imgs[i][0] = resized_rgb_image[i][:, :, :3]
+
+    # img: N, T, H, W, 1 => N, T, H, W
+    gray_scale_img = torch.mean(obv_imgs[:, :, :, :, :], (4))
+
+    gray_scale_img = F.interpolate(gray_scale_img, size=(64, 64), mode='bilinear', align_corners=False)
+    #import pdb; pdb.set_trace()
+
+    gray_scale_img = gray_scale_img.view(-1, 1, gray_scale_img.shape[2], gray_scale_img.shape[3])  # Flatten N and T
+    gray_scale_img = F.interpolate(gray_scale_img, size=(64, 64), mode='bilinear', align_corners=False)
+    gray_scale_img = gray_scale_img.view(NUM_ENVS, IMG_T , 64, 64)  # Reshape back if needed
+
+    obs = {"pose_step": pose_step,
+           "img": gray_scale_img.reshape(-1, IMG_T, 64, 64),
+           "occ": obv_occ.permute(0, 4, 1, 2, 3),
+           }
+
+    #observations = {"policy": obs}
+
+    return obs
+
+def process_action(old_position, azimuth, elevation, distance):
+    """
+    Calculate the new position given the old position and movement parameters.
+
+    Parameters:
+        old_position (tuple): The old position as (x, y, z).
+        azimuth (float): The change in azimuth angle in degrees (rotation around the vertical axis).
+        elevation (float): The change in elevation angle in degrees (up or down).
+        distance (float): The difference in the distance to the origin between the new and old position.
+
+    Returns:
+        tuple: The new position as (x, y, z).
+    """
+
+    # Calculate the current distance to the origin
+    old_distance_to_origin = math.sqrt(old_position[0]**2 + old_position[1]**2 + old_position[2]**2)
+
+    # Calculate the new distance to the origin
+    new_distance_to_origin = old_distance_to_origin + distance
+    
+    # Calculate the old azimuth and elevation angles
+    if old_distance_to_origin != 0:
+        old_azimuth = math.degrees(math.atan2(old_position[1], old_position[0]))
+        old_elevation = math.degrees(math.asin(old_position[2] / old_distance_to_origin))
+    else:
+        old_azimuth = 0
+        old_elevation = 0
+
+    # Calculate the new azimuth and elevation by adding the deltas
+    new_azimuth = old_azimuth + azimuth
+    new_elevation = old_elevation + elevation
+
+    # Convert new angles from degrees to radians
+    azimuth_rad = math.radians(new_azimuth)
+    elevation_rad = math.radians(new_elevation)
+
+    # Decompose the movement into components
+    dx = new_distance_to_origin * math.cos(elevation_rad) * math.cos(azimuth_rad)
+    dy = new_distance_to_origin * math.cos(elevation_rad) * math.sin(azimuth_rad)
+    dz = new_distance_to_origin * math.sin(elevation_rad)
+
+    # Calculate the new position
+    new_x = dx
+    new_y = dy
+    new_z = dz
+    new_positions = torch.tensor([new_x, new_y, new_z]).to(DEVICE)
+
+    dxyz = - new_positions + 1e-6
+    # calculate yaw using torch functions
+    # -pi~pi
+    _yaw = torch.atan2(dxyz[1], dxyz[0])
+    # calculate pitch using torch functions
+    # -pi/2~pi/2
+    _pitch = torch.atan2(dxyz[2], torch.sqrt(dxyz[0]**2 + dxyz[1]**2))
+    # to positive: downward, negative: upward
+    _pitch *= -1
+    # normalize pitch as specified
+    # -pi/3~pi/2 which is -60-90
+    _pitch = torch.clamp(_pitch, min=-torch.pi/3, max=torch.pi/2)
+     
+    pitch_radians = _pitch
+    yaw = _yaw
+    # roll, pitch, yaw
+    #import pdb; pdb.set_trace()
+    target_orientation = rot_utils.euler_angles_to_quats(torch.cat([torch.zeros(1,1), pitch_radians.unsqueeze(0).unsqueeze(1).cpu(), yaw.cpu().unsqueeze(0).unsqueeze(1)],dim=1).numpy(), degrees=False)
+    # setup camera position
+    orientation_camera = convert_camera_frame_orientation_convention(torch.tensor(target_orientation).float(), origin="world", target="ros")
+    return new_positions, orientation_camera, _yaw, _pitch
+
 def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, coverage_ratio_rec, cd_rec, acc_rec, scene_id, end, dataset_name):
-    # env 
+    # env
     grid_size = GRID_SIZE
     env_size = ENV_SIZE
     # sim time step
     sim_dt = sim.get_physics_dt()
-    
+
     # camera
-    camera = scene_entities[f"camera_0"]   
-     
+    camera = scene_entities[f"camera_0"]
+
     # initial pose
     target_position = torch.tensor([INITIAL_POSE], dtype=torch.float32)
     # look at (0, 0, 2)
-    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))  
+    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))
 
     # obv grid
     grid = OccupancyGrid(env_size, (1, grid_size, grid_size, grid_size), device=DEVICE)
@@ -284,7 +465,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     # create a meshgrid of the coordinates
     x_mesh, y_mesh, z_mesh = torch.meshgrid(x_coords, y_coords, z_coords, indexing='ij')
     obv_occ[:, :, :, :, 1:] = torch.stack((x_mesh, y_mesh, z_mesh), dim=-1) / env_size
-    
+
     # ground truth
     occ_gt = torch.tensor(np.load(hollow_occ_path))
     shifted_occ_gt = torch.zeros(occ_gt.shape)
@@ -311,7 +492,6 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     pcd_gt = torch.tensor(pcd_np, dtype=torch.float32)
     pcd_gt = pcd_gt + torch.tensor([TRANS])
     print(pcd_gt.shape)
-
     # save path
     save_img_folder = os.path.join(os.path.dirname(args_cli.checkpoint), f"{dataset_name}_{TRANS}")
     folder_name = os.path.basename(os.path.dirname(hollow_occ_path))
@@ -322,7 +502,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
 
     obv_pose_history = torch.zeros(NUM_ENVS, TOTAL_IMAGES, 5).to(DEVICE)
     obv_imgs = torch.zeros((NUM_ENVS, IMG_T, TARGET_HEIGHT, TARGET_WIDTH, 3)).to(DEVICE)
-    
+
     # start scanning
     for index in range(NUM_STEPS):
         print("")
@@ -337,23 +517,25 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
 
         if index==0:
             pose = torch.tensor([INITIAL_POSE + [pitch, yaw]]).to(DEVICE)
+            old_position = torch.tensor([INITIAL_POSE]).to(DEVICE).squeeze()
         else:
             pose[0, :3] = new_positions
             pose[0, 3] = pitch
-            pose[0, 4] = yaw 
-
+            pose[0, 4] = yaw
+        
+        
         # depth image
         depth_image = torch.clamp(camera.data.output["distance_to_image_plane"], 0, env_size * 4)
         # depth image to local point cloud
         points_3d_cam = unproject_depth(depth_image, camera.data.intrinsic_matrices)
-        # local point cloud to global point cloud
+
         points_3d_world = transform_points(points_3d_cam, camera.data.pos_w, camera.data.quat_w_ros)
         # filter out out of boundary points
         mask_x = (points_3d_world[:, :, 0]).abs() < env_size / 2 - 1e-3
         mask_y = (points_3d_world[:, :, 1]).abs() < env_size / 2 - 1e-3
         mask_z = (points_3d_world[:, :, 2] < env_size - 1e-3) & (points_3d_world[:, :, 2] >= 0)
-        mask = mask_x & mask_y & mask_z    
-        
+        mask = mask_x & mask_y & mask_z
+
         # update grid
         offset = torch.tensor([env_size / 2, env_size / 2, 0]).to(points_3d_world.device)
         if points_3d_world[mask].shape[0] > 0:
@@ -381,7 +563,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         print("Cov:", coverage_ratio[0, 0].item())
 
         # get rgb image
-        rgb_image = camera.data.output["rgb"].clone()     
+        rgb_image = camera.data.output["rgb"].clone()
 
         # pcd
         valid_points = points_3d_world[mask].reshape(-1, 3).cpu().numpy()
@@ -399,6 +581,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         all_colors.append(valid_colors)
         acc_points = np.vstack(all_points)
         # this may make cd and point cv decrease
+        # this may make cd and point cv decrease
         acc_points = subsample_point_cloud(torch.tensor(acc_points), 100000)
         if index >= NUM_STEPS-1:
             cd = chamfer_distance(acc_points, pcd_gt).item()
@@ -415,14 +598,28 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         # torch tensor to numpy
         for key, value in obs.items():
             obs[key] = value.cpu().numpy()
-        
+
         # get prediction
         # (nearest xyz, lookat xyz, real xyz)
-        actions, _  = agent.predict(obs, deterministic=True)
-        actions = torch.tensor(actions).to(DEVICE)        
+        #actions, _  = agent.predict(obs, deterministic=True)
+        #import pdb; pdb.set_trace()
+        gray_scale_img = torch.mean(obv_imgs[:, :, :, :, :], (4))
+        #import pdb; pdb.set_trace()
+        gray_scale_np = gray_scale_img.transpose(1,3).squeeze().cpu().numpy()
+        action_list = settings["discrete_actions"]
+        #while True:
+        discrete_action = agent.policy_action(gray_scale_np)
+        #discrete_action = action_list[a]
+        #print("action", discrete_action)
+        azimuth, elevation, distance = action_list[discrete_action]
+        print(azimuth, elevation, distance) 
+        #actions = torch.tensor(actions).to(DEVICE)
         # rescale actions
-        new_positions, orientation_camera, yaw, pitch = process_action(actions)
+        #import pdb; pdb.set_trace()
+        new_positions, orientation_camera, yaw, pitch = process_action(old_position, -azimuth, -elevation, distance)
+        old_position = new_positions
         print(new_positions, yaw, pitch)
+        new_positions = new_positions.unsqueeze(0)
         #_xyz = actions[:, :3]
         # TODO tune z
         # x: -9.5~9.5, y: -9.5~9.5, z: 0~14
@@ -449,7 +646,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
                            cmap='gray',
                            vmin=0,
                            vmax=ENV_SIZE)
-        plt.imsave(os.path.join(save_img_folder, folder_name, 'rgb'+suffix), 
+        plt.imsave(os.path.join(save_img_folder, folder_name, 'rgb'+suffix),
                    rgb_image[0].detach().cpu().numpy().astype(np.uint8))
 
         # save occ grid
@@ -471,7 +668,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             for i in range(grid_size):
                 occupancy_grid = (probability_grid[0, :, :, i] > 0.5).int()
                 create_blocks_from_occupancy(0, [0, 0, 0], occupancy_grid.cpu().numpy(), cell_size, i * cell_size, i, env_size, 1, 30)
-        
+
         # apply action
         camera.set_world_poses(new_positions, orientation_camera)
 
@@ -547,129 +744,40 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         plot_filename = f'average_curve_plot_scene.png'  # Dynamic filename based on scene_id
         plt.savefig(os.path.join(save_img_folder, plot_filename), dpi=300, bbox_inches='tight')  # dpi=300 for high-resolution
         plt.close()
-        
-
-def process_action(actions):
-    actions = torch.tensor(actions).to(DEVICE)
-    # nearest xyz
-    _xyz = actions[:, :3]
-    _xyz = (_xyz + torch.tensor([0., 0., 1.]).to(DEVICE)) * torch.tensor([ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3, ENV_SIZE/4.0-1e-3]).to(DEVICE)
-    _yaw = actions[:,3]*torch.pi
-    
-    #_pitch = (actions[:,4]+1/5.)/2.*torch.pi*5/6.
-    _pitch = actions[:, 4]*torch.pi
-
-    # to positive: downward, negative: upward
-    _pitch *= -1
-    # normalize pitch as specified
-    # -pi/3~pi/2 which is -60-90
-    _pitch = torch.clamp(_pitch, min=-torch.pi/3, max=torch.pi/2)
-
-    target_position = _xyz
-    pitch_radians = _pitch
-    yaw = _yaw
-    
-    # roll, pitch, yaw
-    target_orientation = rot_utils.euler_angles_to_quats(torch.cat([torch.zeros(yaw.shape[0],1), pitch_radians.unsqueeze(1).cpu(), yaw.cpu().unsqueeze(1)],dim=1).numpy(), degrees=False)
-    # setup camera position
-    orientation_camera = convert_camera_frame_orientation_convention(torch.tensor(target_orientation).float(), origin="world", target="ros") 
-    x_new = _xyz[:, 0] + CAMERA_OFFSET[0] * torch.cos(_yaw) - CAMERA_OFFSET[1] * torch.sin(_yaw)
-    y_new = _xyz[:, 1] + CAMERA_OFFSET[0] * torch.sin(_yaw) + CAMERA_OFFSET[1] * torch.cos(_yaw)
-    z_new = _xyz[:, 2] + CAMERA_OFFSET[2]
-
-    new_positions = torch.stack([x_new, y_new, z_new], dim=1)
-
-    return new_positions, orientation_camera, _yaw, _pitch
-
-def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
-    rays = camera_xyz - occ_grid_xyz
-
-    # Normalize rays
-    rays_norm = rays.to(device) / (torch.norm(rays, dim=-1, keepdim=True)+1e-10).to(device)
-
-    faces = torch.tensor([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=torch.float32).to(device)
-    face_grid = torch.zeros((grid_size, grid_size, grid_size, 6), dtype=torch.bool).to(device)
-
-    # Check visibility for each face
-    for i, face in enumerate(faces):
-        dot_product = torch.sum(rays_norm * face, dim=-1)
-        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0
-
-    return face_grid
-
-def _get_observations(obv_occ, rgb_image, pose, obv_imgs, obv_pose_history, step_num):
-    #import pdb; pdb.set_trace() 
-    #obv_occ[:, :, :, :, 0] = probability_grid.clone()
-    #import pdb; pdb.set_trace()
-    pose[:, :3] /= ENV_SIZE
-    pose[:, 3:] /= 3.15
-    obv_pose_history[:,step_num,:] = pose
-    #print(obv_pose_history, step_num)
-    pose_step = obv_pose_history.reshape(NUM_ENVS, -1)
-    # occ: N, grid_size, grid_size, grid_size, occ + coordinate + face occ
-    #occ_face = torch.cat((self.obv_occ, self.obv_face), dim=-1)
-    
-    print(rgb_image.shape)
-
-    resized_rgb_image = F.interpolate(rgb_image.permute(0, 3, 1, 2)/255.0, size=(TARGET_HEIGHT, TARGET_WIDTH), mode='bilinear', align_corners=False)
-    resized_rgb_image = resized_rgb_image.permute(0, 2, 3, 1)
-    #import pdb; pdb.set_trace()  
-    for i in [0]:
-        obv_imgs[i][4] = obv_imgs[i][3]
-        obv_imgs[i][3] = obv_imgs[i][2]
-        obv_imgs[i][2] = obv_imgs[i][1]
-        obv_imgs[i][1] = obv_imgs[i][0]
-        obv_imgs[i][0] = resized_rgb_image[i][:, :, :3]
-
-    # img: N, T, H, W, 1 => N, T, H, W
-    gray_scale_img = torch.mean(obv_imgs[:, :, :, :, :], (4))
-    
-    gray_scale_img = F.interpolate(gray_scale_img, size=(64, 64), mode='bilinear', align_corners=False)
-    #import pdb; pdb.set_trace()
-
-    gray_scale_img = gray_scale_img.view(-1, 1, gray_scale_img.shape[2], gray_scale_img.shape[3])  # Flatten N and T
-    gray_scale_img = F.interpolate(gray_scale_img, size=(64, 64), mode='bilinear', align_corners=False)
-    gray_scale_img = gray_scale_img.view(NUM_ENVS, IMG_T , 64, 64)  # Reshape back if needed
-
-    obs = {"pose_step": pose_step,
-           "img": gray_scale_img.reshape(-1, IMG_T, 64, 64),
-           "occ": obv_occ.permute(0, 4, 1, 2, 3),
-           }
-
-    #observations = {"policy": obs}
-
-    return obs
 
 def make_env():
-    """Play with stable-baselines agent."""
-    # directory for logging into
-    log_root_path = os.path.join("logs", "sb3", args_cli.task)
-    log_root_path = os.path.abspath(log_root_path)
+    # Parse arguments
+    #if args is None:
+    #    args = sys.argv[1:]
+    #args = parse_args(args)
+    action_dim=5
+    state_dim=(84, 84)
+    # Pick algorithm to train
+    action_list = settings["discrete_actions"]
+    #if(args.type=="DDQN"):
+    algo = DDQN(action_dim, state_dim)
+    algo.load_weights(args_cli.checkpoint)
+    return algo
 
-    # check checkpoint is valid
-    if args_cli.checkpoint is None:
-        if args_cli.use_last_checkpoint:
-            checkpoint = "model_.*.zip"
-        else:
-            checkpoint = "model.zip"
-        checkpoint_path = get_checkpoint_path(log_root_path, ".*", checkpoint)
-    else:
-        checkpoint_path = args_cli.checkpoint
-
-    # create agent from stable baselines
-    print(f"Loading checkpoint from: {checkpoint_path}")
-    agent = PPO.load(checkpoint_path, print_system_info=True)
-    #agent = PPO_Cus.load(checkpoint_path, print_system_info=True) 
-    return agent
-
-def delete_prim_and_children(prim_path, stage):
-    prim = stage.GetPrimAtPath(prim_path)
-    if prim.IsValid():
-        for child in prim.GetChildren():
-            delete_prim_and_children(child.GetPath().pathString, stage)
-        delete_prim(prim_path)
-
-def main():
+def main(args=None):
+    '''
+    # Parse arguments
+    if args is None:
+        args = sys.argv[1:]
+    args = parse_args(args)
+    action_dim=6
+    state_dim=(84, 84)
+    # Pick algorithm to train
+    action_list = settings["discrete_actions"]
+    if(args.type=="DDQN"):
+        algo = DDQN(action_dim, state_dim, args)
+        algo.load_weights(args.model_path)
+    while True:
+       a = algo.policy_action(obv_imgs)
+       discrete_action = action_list[a]
+       print("action", discrete_action)
+    '''
+    
     # Define the input file
     input_file = args_cli.input
     # load data path    
@@ -694,14 +802,14 @@ def main():
                     # Search for `faces.npy` and `fill_occ_set.pkl` in the same directory
                     faces_path = os.path.join(directory, "faces.npy")
                     fill_occ_set_path = os.path.join(directory, "fill_occ_set.pkl")
-                    
+
                     pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD_RF'), "*.ply"))[0]
 
                     # Ensure the required files exist
                     if usd_files and os.path.exists(faces_path) and os.path.exists(fill_occ_set_path):
                         #scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, UsdFileCfg(usd_path=usd_files[0])))
                         scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, pcd_path))
-    
+
     # coverage ratio record
     coverage_ratio_rec = np.zeros((len(scene_paths), NUM_STEPS), dtype=np.float32)
     # chamfer distance record
@@ -715,12 +823,12 @@ def main():
     set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
     # create agent
     agent = make_env()
-    
+
     # floor
     world.scene.add_ground_plane(size=40.0, color=torch.tensor([52.0 / 255.0, 195.0 / 255.0, 235.0 / 255.0]))
     # light
-    UsdLux.DomeLight.Define(world.scene.stage, Sdf.Path("/DomeLight")).CreateIntensityAttr(500)    
-    
+    UsdLux.DomeLight.Define(world.scene.stage, Sdf.Path("/DomeLight")).CreateIntensityAttr(500)
+
     sim_dt = world.get_physics_dt()
     cameraCfg = CameraCfg(
         prim_path=f"/World/Camera_0",
@@ -742,7 +850,7 @@ def main():
     # start scan the shapes
     for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path, pcd_path) in enumerate(scene_paths):
         print(f"{i}: {scene_path}")
-        
+
         dataset_name = os.path.basename(os.path.dirname(os.path.dirname(args_cli.input)))
 
         # add usd into the stage
@@ -767,6 +875,8 @@ def main():
         if args_cli.vis:
             delete_prim("/World/OccupancyBlocks")
 
+
 if __name__ == "__main__":
+    
     main()
-    simulation_app.close()
+

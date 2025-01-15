@@ -53,6 +53,7 @@ class GENNBVEnv(DirectRLEnv):
                 "collision",
                 "coverage_ratio",
                 "goal", # negative reward
+                "goal_pos", # negative reward
                 "status coverage_ratio", # average coverage ratio
                 "status face_coverage_ratio", # average face coverage ratio
             ]
@@ -328,8 +329,8 @@ class GENNBVEnv(DirectRLEnv):
 
         self._yaw = self._actions[:,3]*torch.pi
         #self._pitch = (self._actions[:,4]+1)*torch.pi/4.
-        self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
-        
+        #self._pitch = (self._actions[:,4]+1/5.)/2.*torch.pi*5/6.
+        self._pitch = self._actions[:,4]*torch.pi
         '''
         # 0~1
         self.lookatxyz = torch.tensor([0., 0., 0.]).to(self.device).unsqueeze(0).expand(self._actions.shape[0], -1)
@@ -575,10 +576,13 @@ class GENNBVEnv(DirectRLEnv):
 
         # img: N, H, W, 1
         gray_scale_img = torch.mean(self.obv_imgs[:, :, :, :, :], (4))
+        gray_scale_img = gray_scale_img.view(-1, 1, gray_scale_img.shape[2], gray_scale_img.shape[3])  # Flatten N and T
         gray_scale_img = F.interpolate(gray_scale_img, size=(64, 64), mode='bilinear', align_corners=False)
+        gray_scale_img = gray_scale_img.view(self.cfg.num_envs, self.cfg.img_t , 64, 64)  # Reshape back if needed
+        #gray_scale_img = F.interpolate(gray_scale_img, size=(64, 64), mode='bilinear', align_corners=False)
         #center = compute_weighted_centroid(occ_face[:, :, :, 1:, 4:], self.gt_faces[:, :, :, 1:, :])
         #center /= occ_face.shape[1]
-
+        #import pdb; pdb.set_trace()
         obs = {"pose_step": pose_step,
                "img": gray_scale_img.reshape(-1, self.cfg.img_t, 64, 64),
                "occ": self.obv_occ.permute(0, 4, 1, 2, 3),
@@ -611,10 +615,11 @@ class GENNBVEnv(DirectRLEnv):
         
         rewards = {
             #"face_ratio": (self.face_ratio-self.last_face_ratio) * col_mask * 30,
-            "coverage_ratio": ((self.coverage_ratio-self.last_coverage_ratio) * 30) * col_mask,
+            "coverage_ratio": ((self.coverage_ratio-self.last_coverage_ratio) * 25) * col_mask,
             #"distance": distance * 0.02 * all_mask,
             "collision": -10 * (1 - col_mask),
-            "goal": -100.0 * (self.env_step==self.cfg.total_img - 1).to(self.device).float().reshape(-1,1),
+            "goal": -0.1 * (self.env_step>=50-1).to(self.device).float().reshape(-1,1) * self.env_step.reshape(-1, 1).to(self.device).float(),
+            "goal_pos": (self.coverage_ratio >= 0.96) * 50.0
         }
         
         for k in rewards.keys():
@@ -644,7 +649,7 @@ class GENNBVEnv(DirectRLEnv):
         # done when exceeding the max steps or reaching goal face coverage ratio
         #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.face_ratio.squeeze() >= self.cfg.goal)
         #done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, torch.tensor(self.col).cuda().squeeze() == True)
-        done = torch.logical_or(self.coverage_ratio.squeeze() >= 0.99, torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, torch.tensor(self.col).cuda().squeeze() == True))
+        done = torch.logical_or(self.coverage_ratio.squeeze() >= 0.96, torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, torch.tensor(self.col).cuda().squeeze() == True))
         #done = self.coverage_ratio.squeeze() >= 0.96
         return done, time_out
 

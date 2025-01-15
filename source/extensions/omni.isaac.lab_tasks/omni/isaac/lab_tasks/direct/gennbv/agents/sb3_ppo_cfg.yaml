@@ -4,7 +4,7 @@ seed: 42
 n_timesteps: !!float 3e8 
 policy: 'MultiInputPolicy'
 n_steps: 64 # this is n_step per env, larger num_env with smaller n_steps
-batch_size: 128 # make it smaller than n_steps * num_env
+batch_size: 1024 # make it smaller than n_steps * num_env
 gae_lambda: 0.95
 gamma: 0.99
 n_epochs: 10 #20
