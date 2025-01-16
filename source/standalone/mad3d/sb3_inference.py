@@ -7,6 +7,7 @@ parser.add_argument("--input", type=str, required=True, help="Path to the txt li
 parser.add_argument("--vis", action="store_true", help="If set, visualize occupancy grid.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
+parser.add_argument("--trans", type=int, nargs=3, default=[0, 0, 0], help="Translation vector [x, y, z].")
 # Append AppLauncher CLI args
 AppLauncher.add_app_launcher_args(parser)
 
@@ -30,6 +31,7 @@ import sys
 import csv
 import time
 import open3d as o3d
+#from pytorch3d.loss import chamfer_distance
 from PIL import Image
 from omni.isaac.core import World
 from omni.isaac.core.utils.stage import add_reference_to_stage
@@ -42,21 +44,22 @@ from pxr import Sdf, UsdLux, UsdGeom, Gf, Usd
 from omni.isaac.lab.utils.math import convert_camera_frame_orientation_convention, euler_xyz_from_quat
 from omni.isaac.core.utils.prims import delete_prim
 
+
 from stable_baselines3.common.vec_env import VecNormalize
 sys.path.append("/home/dsr/Documents/mad3d/isaac-sim-4.2.0/home/IsaacLab")
 from sb3_ppo_cus import PPO_Cus
 
 
 # Env
-NUM_STEPS = 20 #15
+NUM_STEPS = 30 #15
 NUM_ENVS = 1
 GRID_SIZE = 20
 ENV_SIZE = 20
-TRANS = [-4, -4, 0]
+TRANS = args_cli.trans
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CAMERA_OFFSET = [0.1, 0, 0]
+CAMERA_OFFSET = [0, 0, 0]
 # camera initial position
-INITIAL_POSE = [5, 5, 10] #[10, 10, 2]
+INITIAL_POSE = [0, -9, 6] #[10, 10, 2]
 # Sensor"
 CAMERA_HEIGHT = 900 #600
 CAMERA_WIDTH = 900 #600
@@ -226,6 +229,7 @@ def chamfer_distance(pcd1, pcd2):
 
     # Average the nearest neighbor distances
     cd = torch.mean(min_dist1) + torch.mean(min_dist2)
+    print(torch.mean(min_dist1), torch.mean(min_dist2))
     return cd
 
 def subsample_point_cloud(pcd, num_samples):
@@ -268,7 +272,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     # initial pose
     target_position = torch.tensor([INITIAL_POSE], dtype=torch.float32)
     # look at (0, 0, 2)
-    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))  
+    camera.set_world_poses_from_view(target_position, torch.tensor(TRANS, dtype=torch.float32).unsqueeze(0))  
 
     # obv grid
     grid = OccupancyGrid(env_size, (1, grid_size, grid_size, grid_size), device=DEVICE)
@@ -304,7 +308,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     print(pcd_gt.shape)
 
     # save path
-    save_img_folder = os.path.join(os.path.dirname(args_cli.checkpoint), f"{dataset_name}_data")
+    save_img_folder = os.path.join(os.path.dirname(args_cli.checkpoint), f"{dataset_name}_{TRANS[0]}_{TRANS[1]}_data")
     folder_name = os.path.basename(os.path.dirname(hollow_occ_path))
     os.makedirs(os.path.join(save_img_folder, folder_name), exist_ok=True)
 
@@ -314,7 +318,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     for index in range(NUM_STEPS):
         print("")
         # simulate
-        for _ in range(3):
+        for _ in range(6):
             sim.step()
             camera.update(dt=sim_dt)
 
@@ -384,17 +388,25 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         all_points.append(valid_points)
         all_colors.append(valid_colors)
         acc_points = np.vstack(all_points)
+        if index >=NUM_STEPS-1:
         # this may make cd and point cv decrease
-        acc_points = subsample_point_cloud(torch.tensor(acc_points), 100000)
-        cd = chamfer_distance(acc_points, pcd_gt).item()
-        cd_rec[scene_id, index] = cd
-        print("CD:", cd)
-        accuracy = point_coverage_ratio(acc_points, pcd_gt, 0.1)
-        acc_rec[scene_id, index] = accuracy
-        print("Acc:", accuracy)
+            acc_points = subsample_point_cloud(torch.tensor(acc_points), 100000)
+            cd = chamfer_distance(acc_points, pcd_gt).item()
+            cd_rec[scene_id, index] = cd
+            print("CD:", cd)
+            accuracy = point_coverage_ratio(acc_points, pcd_gt, 0.1)
+            acc_rec[scene_id, index] = accuracy
+            print("Acc:", accuracy)
+
+        if index <= 20:
+            hl = 10
+        elif index <= 25:
+            hl = 5
+        elif index <= 30:
+            hl = 2
 
         # get observation 
-        obs = _get_observations(probability_grid, rgb_image, pose.clone(), obv_face)
+        obs = _get_observations(probability_grid, rgb_image, pose.clone(), obv_face, hl=hl)
         # torch tensor to numpy
         for key, value in obs.items():
             obs[key] = value.cpu().numpy()
@@ -418,7 +430,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
                            vmax=ENV_SIZE)
         plt.imsave(os.path.join(save_img_folder, folder_name, 'rgb'+suffix), 
                    rgb_image[0].detach().cpu().numpy().astype(np.uint8))
-
+        print(os.path.join(save_img_folder, folder_name, 'rgb'+suffix))
         # save occ grid
         np.save(os.path.join(save_img_folder, folder_name, f'prob_occ_{index}.npy'), probability_grid[0, :, :, :].cpu().numpy())
 
@@ -517,34 +529,48 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         
 
 def process_action(actions):
+
     actions = torch.tensor(actions).to(DEVICE)
     # nearest xyz
     _xyz = actions[:, :3]
     _xyz = (_xyz + torch.tensor([0., 0., 1.]).to(DEVICE)) * torch.tensor([ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3]).to(DEVICE)
     
     # non-nearest xyz
-    real_xyz = actions[:, 6:9]
-    real_xyz = (real_xyz + torch.tensor([0., 0., 1.]).to(DEVICE)) * torch.tensor([ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3]).to(DEVICE)
+    #real_xyz = actions[:, 6:9]
+    #real_xyz = (real_xyz + torch.tensor([0., 0., 1.]).to(DEVICE)) * torch.tensor([ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3]).to(DEVICE)
 
     # 0~1
-    lookatxyz = actions[:, 3:6]
+    #lookatxyz = actions[:, 3:6]
     # -1~1
-    lookatxyz = lookatxyz*2-1
+    #lookatxyz = lookatxyz*2-1
     # to real-world xyz
-    lookatxyz = (lookatxyz+torch.tensor([0., 0., 1.]).to(DEVICE)) * torch.tensor([ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3]).to(DEVICE)
+    #lookatxyz = (lookatxyz+torch.tensor([0., 0., 1.]).to(DEVICE)) * torch.tensor([ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3, ENV_SIZE/2.0-1e-3]).to(DEVICE)
     # compute yaw and pitch
-    dxyz = lookatxyz - _xyz + 1e-6
+    #dxyz = lookatxyz - _xyz + 1e-6
     # calculate yaw using torch functions
     # -pi~pi
-    _yaw = torch.atan2(dxyz[:, 1], dxyz[:, 0])
+    #_yaw = torch.atan2(dxyz[:, 1], dxyz[:, 0])
     # calculate pitch using torch functions
     # -pi/2~pi/2
-    _pitch = torch.atan2(dxyz[:, 2], torch.sqrt(dxyz[:, 0]**2 + dxyz[:, 1]**2))
+    #_pitch = torch.atan2(dxyz[:, 2], torch.sqrt(dxyz[:, 0]**2 + dxyz[:, 1]**2))
+    # to positive: downward, negative: upward
+    #_pitch *= -1
+    # normalize pitch as specified
+    # -pi/3~pi/2 which is -60-90
+    #_pitch = torch.clamp(_pitch, min=-torch.pi/3, max=torch.pi/2)
+
+    # calculate yaw using torch functions
+    # -pi~pi
+    _yaw = actions[:, 4] * torch.pi
+    # calculate pitch using torch functions
+    # -pi/2~pi/2
+    _pitch = actions[:, 3] * torch.pi
     # to positive: downward, negative: upward
     _pitch *= -1
     # normalize pitch as specified
     # -pi/3~pi/2 which is -60-90
     _pitch = torch.clamp(_pitch, min=-torch.pi/3, max=torch.pi/2)
+
 
     target_position = _xyz
     pitch_radians = _pitch
@@ -574,18 +600,18 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     # Check visibility for each face
     for i, face in enumerate(faces):
         dot_product = torch.sum(rays_norm * face, dim=-1)
-        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0.1736
+        face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0 #0.1736
 
     return face_grid
 
-def _get_observations(probability_grid, rgb_image, pose, obv_face):
+def _get_observations(probability_grid, rgb_image, pose, obv_face, hl=9):
         
         # pose
         current_pose = pose
         # norm
         current_pose[:3] /= ENV_SIZE
         current_pose /= 3.15
-        h_limit = (torch.ones(NUM_ENVS).to(DEVICE)*10*GRID_SIZE/ENV_SIZE).int()
+        h_limit = (torch.ones(NUM_ENVS).to(DEVICE)*hl*GRID_SIZE/ENV_SIZE).int()
         h_limit_expanded = h_limit.unsqueeze(1) / GRID_SIZE
         pose_step = torch.cat([current_pose.reshape(NUM_ENVS, -1), h_limit_expanded], dim=1)
 
@@ -658,9 +684,9 @@ def main():
     # load data path    
     scene_paths = []
     with open(input_file, "r") as file:
-        for line in file:
-        #for line in self.files:
-            # Strip newline and split by space
+        for i, line in enumerate(file):
+            #for line in self.files:
+                # Strip newline and split by space
             line = line.strip()
             if line:  # Ignore empty lines
                 *path_parts, _ = line.rsplit(maxsplit=1)  # Split by spaces, last part is the value
@@ -677,14 +703,14 @@ def main():
                     # Search for `faces.npy` and `fill_occ_set.pkl` in the same directory
                     faces_path = os.path.join(directory, "faces.npy")
                     fill_occ_set_path = os.path.join(directory, "fill_occ_set.pkl")
-
-                    pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD_RF'), "*.ply"))[0]
+                    #print(os.path.join(directory.replace('preprocess', 'PCD_RF'), "*.ply"))
+                    pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD100K_RF'), "*.ply"))[0]
 
                     # Ensure the required files exist
                     if usd_files and os.path.exists(faces_path) and os.path.exists(fill_occ_set_path):
                         #scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, UsdFileCfg(usd_path=usd_files[0])))
                         scene_paths.append((usd_files[0], hollow_occ_path, fill_occ_set_path, faces_path, pcd_path))
-    
+        
     # coverage ratio record
     coverage_ratio_rec = np.zeros((len(scene_paths), NUM_STEPS), dtype=np.float32)
     # chamfer distance record

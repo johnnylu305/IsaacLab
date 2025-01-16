@@ -916,7 +916,7 @@ class ActorCriticPolicyCus(BasePolicy):
             prob_grid = obs["occ"][:, 0, :, :, :].clone()
             real_actions = actions
             actions = get_constraint_actions(prob_grid, actions, obs["pose_step"][:, 5], threshold=0.5, env_size=obs["env_size"][0, 0]).detach()
-            gt_off = (actions-real_actions).detach()
+            gt_off = (actions[:, :3]-real_actions[:, :3]).detach()
 
         return values, log_prob, entropy, off, gt_off
 

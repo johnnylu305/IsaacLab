@@ -277,10 +277,10 @@ class MAD3DEnv(DirectRLEnv):
 
         # calculate yaw using torch functions
         # -pi~pi
-        self._yaw = self._actions[:, 4]
+        self._yaw = self._actions[:, 4] * torch.pi
         # calculate pitch using torch functions
         # -pi/2~pi/2
-        self._pitch = self._actions[:, 3]
+        self._pitch = self._actions[:, 3] * torch.pi
         # to positive: downward, negative: upward
         self._pitch *= -1
         # normalize pitch as specified
