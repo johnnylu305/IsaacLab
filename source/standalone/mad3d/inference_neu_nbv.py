@@ -426,7 +426,7 @@ class OccupancyGrid:
         start_pts = start_pts.repeat(end_pts.shape[0],1)
         #start_pts = torch.tensor([[5,0,5]]).cuda()
         #end_pts = torch.tensor([[15,15,5],[10,10,10]]).cuda()
-        #import pdb; pdb.set_trace()
+        
         #print(start_pts.shape)
         #print(end_pts.shape)
         bresenham_path = bresenhamline(end_pts, start_pts, max_iter=-1, device=self.device)
@@ -823,7 +823,7 @@ def run_simulator(sim, scene_entities, output, scene_path):
     checkpoint_path = os.path.join(log_path, "checkpoints", "best.ckpt")
     assert os.path.exists(checkpoint_path), "checkpoint does not exist"
     ckpt_file = torch.load(checkpoint_path)
-    #import pdb; pdb.set_trace()
+    
     neu_nbv_model = PretrainedModel(cfg["model"], ckpt_file, 'cuda', [0])
 
     batch_size = 49
@@ -942,7 +942,7 @@ def run_simulator(sim, scene_entities, output, scene_path):
         image_queue.append(new_image)
         image_queue.popleft()
         images = np.array(image_queue)/255
-        #import pdb; pdb.set_trace()
+        
         #images = np.load("source/standalone/mad3d/neu_nbv_images.npy")
         images = torch.tensor(images).cuda().float()
         
