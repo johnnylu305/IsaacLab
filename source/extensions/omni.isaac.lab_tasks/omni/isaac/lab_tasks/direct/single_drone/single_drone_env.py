@@ -525,7 +525,7 @@ class MAD3DEnv(DirectRLEnv):
         rewards = {
             "face_ratio": (self.face_ratio-self.last_face_ratio) * col_mask * 30,
             "all_penalty": (1.0-all_mask)*-1,
-            "goal": (self.face_ratio >= self.cfg.goal).reshape(-1, 1) * 100.
+            "goal": (self.face_ratio >= self.cfg.goal).reshape(-1, 1) * 30.
         }
 
         for k in rewards.keys():

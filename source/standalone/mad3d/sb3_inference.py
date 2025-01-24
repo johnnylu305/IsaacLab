@@ -724,7 +724,9 @@ def main():
     set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
     # create agent
     agent = make_env()
-    
+    total_params = sum(p.numel() for p in agent.policy.parameters())
+    print(f"Total number of parameters: {total_params}")
+    #exit()
     # floor
     world.scene.add_ground_plane(size=40.0, color=torch.tensor([52.0 / 255.0, 195.0 / 255.0, 235.0 / 255.0]))
     # light
