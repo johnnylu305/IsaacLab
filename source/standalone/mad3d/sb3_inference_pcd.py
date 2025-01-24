@@ -379,26 +379,26 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         valid_points = points_3d_world[mask].reshape(-1, 3).cpu().numpy()
         valid_colors = torch.transpose(rgb_image[0], 0, 1)[mask.reshape(CAMERA_HEIGHT, CAMERA_WIDTH)].reshape(-1, 3).cpu().numpy()
 
-        floor_mask = valid_points[:, 2]>(env_size/grid_size)
+        floor_mask = valid_points[:, 2]>0.1 #(env_size/grid_size)
         valid_points = valid_points[floor_mask]
         valid_colors = valid_colors[floor_mask]
 
-        floor_mask = pcd_gt[:, 2]>(env_size/grid_size)
+        floor_mask = pcd_gt[:, 2]>0.1 #(env_size/grid_size)
         pcd_gt = pcd_gt[floor_mask]
 
         # Append valid points and colors to lists
         all_points.append(valid_points)
         all_colors.append(valid_colors)
         acc_points = np.vstack(all_points)
-        if index >=NUM_STEPS-1:
+        #if index >=NUM_STEPS-1:
         # this may make cd and point cv decrease
-            acc_points = subsample_point_cloud(torch.tensor(acc_points), 100000)
-            cd = chamfer_distance(acc_points, pcd_gt).item()
-            cd_rec[scene_id, index] = cd
-            print("CD:", cd)
-            accuracy = point_coverage_ratio(acc_points, pcd_gt, 0.1)
-            acc_rec[scene_id, index] = accuracy
-            print("Acc:", accuracy)
+        #    acc_points = subsample_point_cloud(torch.tensor(acc_points), 100000)
+        #    cd = chamfer_distance(acc_points, pcd_gt).item()
+        #    cd_rec[scene_id, index] = cd
+        #    print("CD:", cd)
+        #    accuracy = point_coverage_ratio(acc_points, pcd_gt, 0.1)
+        #    acc_rec[scene_id, index] = accuracy
+        #    print("Acc:", accuracy)
 
         if index <= 20:
             hl = 10
@@ -425,33 +425,33 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         _yaw, _pitch = pose[0, 3:]
         coverage_ratio = coverage_ratio.cpu().numpy()[0][0]
         suffix = f"_{index}_{x:.2f}_{y:.2f}_{z:.2f}_{_yaw:.2f}_{_pitch:.2f}_{coverage_ratio:.2f}.png"
-        plt.imsave(os.path.join(save_img_folder, folder_name, 'depth'+suffix),
-                   np.clip(depth_image[0,:,:,0].detach().cpu().numpy(), 0, ENV_SIZE*2).astype(np.uint8),
-                           cmap='gray',
-                           vmin=0,
-                           vmax=ENV_SIZE)
-        plt.imsave(os.path.join(save_img_folder, folder_name, 'rgb'+suffix), 
-                   rgb_image[0].detach().cpu().numpy().astype(np.uint8))
+        #plt.imsave(os.path.join(save_img_folder, folder_name, 'depth'+suffix),
+        #           np.clip(depth_image[0,:,:,0].detach().cpu().numpy(), 0, ENV_SIZE*2).astype(np.uint8),
+        #                   cmap='gray',
+        #                   vmin=0,
+        #                   vmax=ENV_SIZE)
+        #plt.imsave(os.path.join(save_img_folder, folder_name, 'rgb'+suffix), 
+        #           rgb_image[0].detach().cpu().numpy().astype(np.uint8))
         print(os.path.join(save_img_folder, folder_name, 'rgb'+suffix))
         # save occ grid
-        np.save(os.path.join(save_img_folder, folder_name, f'prob_occ_{index}.npy'), probability_grid[0, :, :, :].cpu().numpy())
+        #np.save(os.path.join(save_img_folder, folder_name, f'prob_occ_{index}.npy'), probability_grid[0, :, :, :].cpu().numpy())
 
         # save pcd
         # Create Open3D point cloud
-        point_cloud = o3d.geometry.PointCloud()
-        point_cloud.points = o3d.utility.Vector3dVector(valid_points)
-        point_cloud.colors = o3d.utility.Vector3dVector(valid_colors/255.)  # Normalize colors to [0, 1]
+        #point_cloud = o3d.geometry.PointCloud()
+        #point_cloud.points = o3d.utility.Vector3dVector(valid_points)
+        #point_cloud.colors = o3d.utility.Vector3dVector(valid_colors/255.)  # Normalize colors to [0, 1]
         # Save to a PLY file
-        o3d.io.write_point_cloud(os.path.join(save_img_folder, folder_name, f'pcd_{index}.ply'), point_cloud)
+        #o3d.io.write_point_cloud(os.path.join(save_img_folder, folder_name, f'pcd_{index}.ply'), point_cloud)
 
         # this may slow down the process
-        org_x, org_y, org_z = env_size/2., env_size/2., 0
-        cell_size = env_size/grid_size  # meters per cell
-        slice_height = env_size / grid_size  # height of each slice in meters
-        if args_cli.vis:
-            for i in range(grid_size):
-                occupancy_grid = (probability_grid[0, :, :, i] > 0.5).int()
-                create_blocks_from_occupancy(0, [0, 0, 0], occupancy_grid.cpu().numpy(), cell_size, i * cell_size, i, env_size, 1, 30)
+        #org_x, org_y, org_z = env_size/2., env_size/2., 0
+        #cell_size = env_size/grid_size  # meters per cell
+        #slice_height = env_size / grid_size  # height of each slice in meters
+        #if args_cli.vis:
+        #    for i in range(grid_size):
+        #        occupancy_grid = (probability_grid[0, :, :, i] > 0.5).int()
+        #        create_blocks_from_occupancy(0, [0, 0, 0], occupancy_grid.cpu().numpy(), cell_size, i * cell_size, i, env_size, 1, 30)
         
         # apply action
         camera.set_world_poses(new_positions, orientation_camera)

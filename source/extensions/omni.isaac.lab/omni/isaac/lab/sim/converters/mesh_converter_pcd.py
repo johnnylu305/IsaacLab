@@ -411,7 +411,8 @@ def rescale_scene(stage, outfile, scene_prim_root="/World/Scene", max_len=8, env
     o3d_mesh.vertices = o3d.utility.Vector3dVector(transformed_vertices)
     
     o3d_mesh.compute_vertex_normals()
-    pcd = o3d_mesh.sample_points_poisson_disk(20000)
+    #pcd = o3d_mesh.sample_points_poisson_disk(20000)
+    pcd = o3d_mesh.sample_points_poisson_disk(100000)
     # Save the point cloud to a file (e.g., PLY format)
     o3d.io.write_point_cloud(outfile.replace('.usd', '.ply'), pcd)
 

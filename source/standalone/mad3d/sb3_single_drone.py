@@ -208,8 +208,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # lr schedule
     lr = 3e-4
-    #agent_cfg["learning_rate"] = piecewise_step_lr_schedule(lr_list=[lr, lr/2., lr/4., lr/8.], step_list=[1500000, 2000000, 2500000, 6000000], total_timesteps=n_timesteps)
-    agent_cfg["learning_rate"] = piecewise_step_lr_schedule(lr_list=[lr, lr/2., lr/4., lr/8.], step_list=[2000000, 2500000, 3000000, 4000000], total_timesteps=n_timesteps)
+    agent_cfg["learning_rate"] = piecewise_step_lr_schedule(lr_list=[lr, lr/2., lr/4., lr/8., lr/16.], step_list=[1500000, 2000000, 2500000, 3000000, 6000000], total_timesteps=n_timesteps)
+    #agent_cfg["learning_rate"] = piecewise_step_lr_schedule(lr_list=[lr, lr/2., lr/4., lr/8.], step_list=[2000000, 2500000, 3000000, 4000000], total_timesteps=n_timesteps)
 
     agent = PPO_Cus(policy_arch, env, verbose=1, **agent_cfg)
     new_logger = configure(log_dir, ["stdout", "tensorboard"])
