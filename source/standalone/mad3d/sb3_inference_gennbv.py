@@ -7,6 +7,8 @@ parser.add_argument("--input", type=str, required=True, help="Path to the txt li
 parser.add_argument("--vis", action="store_true", help="If set, visualize occupancy grid.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
+parser.add_argument("--trans", type=int,nargs=3, default=[0, 0, 0], help="Translation offset for x, y, z.")
+
 # Append AppLauncher CLI args
 AppLauncher.add_app_launcher_args(parser)
 
@@ -51,16 +53,17 @@ from stable_baselines3 import PPO
 #TRANS = [-4, -4, 0]
 #TRANS = [4, 4, 0]
 #TRANS = [4, -4, 0]
-TRANS = [-4 ,4, 0]
+#TRANS = [-4 ,4, 0]
+TRANS = args_cli.trans
 # Env
 NUM_STEPS = 30
 NUM_ENVS = 1
 GRID_SIZE = 20
 ENV_SIZE = 20
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CAMERA_OFFSET = [0.1, 0, 0]
+CAMERA_OFFSET = [0, 0, 0]#[0.1, 0, 0]
 # camera initial position
-INITIAL_POSE = [10, 10, 2]
+INITIAL_POSE = [0, -9, 6]#[10, 10, 2]
 # Sensor"
 CAMERA_HEIGHT = 900 #600
 CAMERA_WIDTH = 900 #600
@@ -272,7 +275,8 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     # initial pose
     target_position = torch.tensor([INITIAL_POSE], dtype=torch.float32)
     # look at (0, 0, 2)
-    camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))  
+    #camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))  
+    camera.set_world_poses_from_view(target_position, torch.tensor(TRANS, dtype=torch.float32).unsqueeze(0))
 
     # obv grid
     grid = OccupancyGrid(env_size, (1, grid_size, grid_size, grid_size), device=DEVICE)
@@ -322,7 +326,9 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
 
     obv_pose_history = torch.zeros(NUM_ENVS, TOTAL_IMAGES, 5).to(DEVICE)
     obv_imgs = torch.zeros((NUM_ENVS, IMG_T, TARGET_HEIGHT, TARGET_WIDTH, 3)).to(DEVICE)
-    
+    import time
+    old_time = time.perf_counter()
+
     # start scanning
     for index in range(NUM_STEPS):
         print("")
@@ -409,6 +415,8 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             print("Acc:", accuracy)
 
         # get observation 
+        
+
         obs = _get_observations(obv_occ, rgb_image, pose.clone(), obv_imgs, obv_pose_history, index)
         obv_images = obs["img"].clone()
         obv_pose_history = obs["pose_step"].clone().reshape(NUM_ENVS, TOTAL_IMAGES, 5)
@@ -418,7 +426,13 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         
         # get prediction
         # (nearest xyz, lookat xyz, real xyz)
+        #import time
+        #old_time = time.perf_counter()
+
+        #for i in range(100):
         actions, _  = agent.predict(obs, deterministic=True)
+        print(time.perf_counter()-old_time)
+        #exit()    
         actions = torch.tensor(actions).to(DEVICE)        
         # rescale actions
         new_positions, orientation_camera, yaw, pitch = process_action(actions)
@@ -695,7 +709,7 @@ def main():
                     faces_path = os.path.join(directory, "faces.npy")
                     fill_occ_set_path = os.path.join(directory, "fill_occ_set.pkl")
                     
-                    pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD_RF'), "*.ply"))[0]
+                    pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD100K_RF'), "*.ply"))[0]
 
                     # Ensure the required files exist
                     if usd_files and os.path.exists(faces_path) and os.path.exists(fill_occ_set_path):
@@ -715,6 +729,9 @@ def main():
     set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
     # create agent
     agent = make_env()
+    
+    total_params = sum(p.numel() for p in agent.policy.parameters())
+    print(f"Total number of parameters: {total_params}")
     
     # floor
     world.scene.add_ground_plane(size=40.0, color=torch.tensor([52.0 / 255.0, 195.0 / 255.0, 235.0 / 255.0]))
