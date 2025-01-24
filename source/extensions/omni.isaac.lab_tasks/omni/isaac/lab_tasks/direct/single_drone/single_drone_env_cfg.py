@@ -61,7 +61,7 @@ CRAZYFLIE_CFG = ArticulationCfg(
 class MAD3DEnvCfg(DirectRLEnvCfg):
 
     # data
-    data_root = os.path.join(os.path.abspath(os.sep), "home", "dsr", "Documents", "mad3d", "New_Dataset20", "objaverse")
+    data_root = os.path.join(os.path.abspath(os.sep), "projects", "MAD3D", "Zhuoli", "Dataset", "objaverse", "preprocess")
     camera_folder = CAMERA_FOLDER
 
     # env
@@ -70,11 +70,11 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     env_spacing = 60 # in meter, 2 cells is one unit
     
     # randomly initialize the first viewpoint
-    random_initial_view = True
+    random_initial_view = False
     default_init_pos = DEFAULT_INIT_POS    
 
     # randomly translate the object
-    random_trans_obj = True
+    random_trans_obj = False
     # x, y translation range in meter
     trans_obj_x = [-4, 4] #[-2, 2] 
     trans_obj_y = [-4, 4] #[-2, 2]
@@ -115,7 +115,7 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     # save image during training
     save_img = True
     # visualize occupancy grid during training
-    vis_occ = False
+    vis_occ = True
     # save images for these environments
     save_env_ids = [0, 1]
     # save frequency (episode)

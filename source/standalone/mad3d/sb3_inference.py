@@ -1,22 +1,31 @@
 import argparse
 from omni.isaac.lab.app import AppLauncher
 
+#from omni.isaac.lab_tasks.utils.parse_cfg import get_checkpoint_path, load_cfg_from_registry, parse_env_cfg
+
 # Add argparse arguments
 parser = argparse.ArgumentParser(description="Utility to create occupancy grid")
 parser.add_argument("--input", type=str, required=True, help="Path to the txt list.")
 parser.add_argument("--vis", action="store_true", help="If set, visualize occupancy grid.")
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint.")
+parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
+parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
+
 # Append AppLauncher CLI args
 AppLauncher.add_app_launcher_args(parser)
 
 # Parse the arguments
 args_cli = parser.parse_args()
+# always enable cameras to record video
+if args_cli.video:
+    args_cli.enable_cameras = True
 
 # Launch Omniverse app
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
+import gym
 import os
 import glob
 import numpy as np
@@ -41,6 +50,12 @@ from omni.kit.viewport.utility import get_active_viewport, capture_viewport_to_f
 from pxr import Sdf, UsdLux, UsdGeom, Gf, Usd
 from omni.isaac.lab.utils.math import convert_camera_frame_orientation_convention, euler_xyz_from_quat
 from omni.isaac.core.utils.prims import delete_prim
+from omni.isaac.lab.assets import ArticulationCfg
+from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
+from omni.isaac.lab.actuators import ImplicitActuatorCfg
+from omni.isaac.lab.assets import Articulation
+from omni.isaac.core.utils.prims import get_prim_at_path
+from omni.kit.viewport.utility import get_active_viewport, capture_viewport_to_file
 
 from stable_baselines3.common.vec_env import VecNormalize
 sys.path.append("/home/dsr/Documents/mad3d/isaac-sim-4.2.0/home/IsaacLab")
@@ -48,15 +63,15 @@ from sb3_ppo_cus import PPO_Cus
 
 
 # Env
-NUM_STEPS = 20 #15
+NUM_STEPS = 30 #15
 NUM_ENVS = 1
 GRID_SIZE = 20
 ENV_SIZE = 20
-TRANS = [-4, -4, 0]
+TRANS = [0, 0, 0]
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CAMERA_OFFSET = [0.1, 0, 0]
 # camera initial position
-INITIAL_POSE = [5, 5, 10] #[10, 10, 2]
+INITIAL_POSE = [0, -9, 6 ]#[5, 5, 10] #[10, 10, 2]
 # Sensor"
 CAMERA_HEIGHT = 900 #600
 CAMERA_WIDTH = 900 #600
@@ -155,9 +170,12 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
         width=CAMERA_WIDTH,
         height=CAMERA_HEIGHT
     )
+    #self._robot = Articulation(self.cfg.robot)
+    #self.scene.articulations["robot"] = self._robot
+    #rescale_robot("/World/envs/env_0/Robot", 10)
  
     scene_entities = {}
-    
+    scene_entities["robot_0"] = Articulation(CRAZYFLIE_CFG)
     scene_entities[f"camera_0"] = Camera(cameraCfg)
 
     return scene_entities
@@ -261,15 +279,17 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     env_size = ENV_SIZE
     # sim time step
     sim_dt = sim.get_physics_dt()
-    
+
+    robot = scene_entities["robot_0"] 
     # camera
     camera = scene_entities[f"camera_0"]   
-     
+    #import pdb; pdb.set_trace() 
     # initial pose
     target_position = torch.tensor([INITIAL_POSE], dtype=torch.float32)
     # look at (0, 0, 2)
     camera.set_world_poses_from_view(target_position, torch.tensor([0, 0, 2], dtype=torch.float32).unsqueeze(0))  
-
+    
+    
     # obv grid
     grid = OccupancyGrid(env_size, (1, grid_size, grid_size, grid_size), device=DEVICE)
     # obv face
@@ -314,10 +334,12 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     for index in range(NUM_STEPS):
         print("")
         # simulate
-        for _ in range(3):
+        
+        for _ in range(10):
             sim.step()
             camera.update(dt=sim_dt)
-
+            robot.update(dt=sim_dt)
+        
         camera_ori = camera.data.quat_w_ros.clone()
         camera_ori = convert_camera_frame_orientation_convention(camera_ori, origin="ros", target="world")
         roll, pitch, yaw = euler_xyz_from_quat(camera_ori)
@@ -329,6 +351,9 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             pose[0, 3] = pitch
             pose[0, 4] = yaw
 
+        #root_state = torch.ones((1, 13)).cuda() * 0
+        #root_state[:, :3] = new_positions
+        #robot.write_root_pose_to_sim(root_state[:, :7])
         # depth image
         depth_image = torch.clamp(camera.data.output["distance_to_image_plane"], 0, env_size * 4)
         # depth image to local point cloud
@@ -373,12 +398,12 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         valid_points = points_3d_world[mask].reshape(-1, 3).cpu().numpy()
         valid_colors = torch.transpose(rgb_image[0], 0, 1)[mask.reshape(CAMERA_HEIGHT, CAMERA_WIDTH)].reshape(-1, 3).cpu().numpy()
 
-        floor_mask = valid_points[:, 2]>(env_size/grid_size)
-        valid_points = valid_points[floor_mask]
-        valid_colors = valid_colors[floor_mask]
+        #floor_mask = valid_points[:, 2]>(env_size/grid_size)
+        #valid_points = valid_points[floor_mask]
+        #valid_colors = valid_colors[floor_mask]
 
-        floor_mask = pcd_gt[:, 2]>(env_size/grid_size)
-        pcd_gt = pcd_gt[floor_mask]
+        #floor_mask = pcd_gt[:, 2]>(env_size/grid_size)
+        #pcd_gt = pcd_gt[floor_mask]
 
         # Append valid points and colors to lists
         all_points.append(valid_points)
@@ -405,12 +430,16 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         
         # rescale actions
         new_positions, orientation_camera, yaw, pitch = process_action(actions)
-                
+        
+        #root_state = torch.ones((1, 13)).cuda() * 0
+        #root_state[:, :3] = new_positions
+        #robot.write_root_pose_to_sim(root_state[:, :7])
+
         # save data
         x, y, z = pose[0, :3]
         _yaw, _pitch = pose[0, 3:]
         coverage_ratio = coverage_ratio.cpu().numpy()[0][0]
-        suffix = f"_{index}_{x:.2f}_{y:.2f}_{z:.2f}_{_yaw:.2f}_{_pitch:.2f}_{coverage_ratio:.2f}.png"
+        suffix = f"_{index:02d}_{x:.2f}_{y:.2f}_{z:.2f}_{_yaw:.2f}_{_pitch:.2f}_{coverage_ratio:.2f}.png"
         plt.imsave(os.path.join(save_img_folder, folder_name, 'depth'+suffix),
                    np.clip(depth_image[0,:,:,0].detach().cpu().numpy(), 0, ENV_SIZE*2).astype(np.uint8),
                            cmap='gray',
@@ -420,7 +449,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
                    rgb_image[0].detach().cpu().numpy().astype(np.uint8))
 
         # save occ grid
-        np.save(os.path.join(save_img_folder, folder_name, f'prob_occ_{index}.npy'), probability_grid[0, :, :, :].cpu().numpy())
+        np.save(os.path.join(save_img_folder, folder_name, f'prob_occ_{index:02d}.npy'), probability_grid[0, :, :, :].cpu().numpy())
 
         # save pcd
         # Create Open3D point cloud
@@ -428,7 +457,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         point_cloud.points = o3d.utility.Vector3dVector(valid_points)
         point_cloud.colors = o3d.utility.Vector3dVector(valid_colors/255.)  # Normalize colors to [0, 1]
         # Save to a PLY file
-        o3d.io.write_point_cloud(os.path.join(save_img_folder, folder_name, f'pcd_{index}.ply'), point_cloud)
+        o3d.io.write_point_cloud(os.path.join(save_img_folder, folder_name, f'pcd_{index:02d}.ply'), point_cloud)
 
         # this may slow down the process
         org_x, org_y, org_z = env_size/2., env_size/2., 0
@@ -438,10 +467,68 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             for i in range(grid_size):
                 occupancy_grid = (probability_grid[0, :, :, i] > 0.5).int()
                 create_blocks_from_occupancy(0, [0, 0, 0], occupancy_grid.cpu().numpy(), cell_size, i * cell_size, i, env_size, 1, 30)
-        
         # apply action
         camera.set_world_poses(new_positions, orientation_camera)
+        
+        #t_values = torch.linspace(0, 1, steps=100).unsqueeze(1).to(pose.device)
+        #interpolated_points = (1 - t_values) * pose[0,:3] + t_values * new_positions
+        # Calculate radii (distance from origin)
+        r1 = torch.norm(pose[0, :3].squeeze())
+        r2 = torch.norm(new_positions.squeeze())
+         
+        # Normalize the points to lie on the unit sphere
+        p1 = pose[0, :3] / r1
+        p2 = new_positions / r2
+        
+        # Calculate the dot product and angle between the two vectors
+        dot_product = torch.clamp(torch.sum(p1 * p2, dim=-1), -1.0, 1.0)  # Clamp to avoid numerical issues
+        theta = torch.acos(dot_product)  # Angle between the two points
+        
+        # Create t values for interpolation
+        t_values = torch.linspace(0, 1, 80).unsqueeze(1).to(pose.device)
+        
+        # Perform spherical linear interpolation (slerp)
+        sin_theta = torch.sin(theta)
+        interpolated_points = (
+            (torch.sin((1 - t_values) * theta) / sin_theta).unsqueeze(-1) * p1 +
+            (torch.sin(t_values * theta) / sin_theta).unsqueeze(-1) * p2
+        )
+        
+        # Scale back to the original radii
+        radii = (1 - t_values) * r1 + t_values * r2
+        interpolated_points *= radii.unsqueeze(2)
+        interpolated_points *= 1.1
 
+        for i_point, xyz in enumerate(interpolated_points):
+            root_state = robot.data.default_root_state.clone()
+            #import pdb; pdb.set_trace()
+            #root_state = torch.ones((1, 13)).cuda() * 0
+            root_state[:, :3] = xyz
+            #root_state[:,3:7] = target_orientation
+            dxyz = xyz + 1e-6
+             # calculate yaw using torch functions
+            # -pi~pi
+            yaw = torch.atan2(dxyz[:, 1], dxyz[:, 0])
+            target_orientation = rot_utils.euler_angles_to_quats(torch.cat([torch.zeros(yaw.shape[0],1), torch.zeros(yaw.shape[0],1), yaw.cpu().unsqueeze(1)],dim=1).numpy(), degrees=False)
+            target_orientation = torch.from_numpy(target_orientation)
+            root_state[:,3:7] = target_orientation
+            #root_state[:, :3] += self._terrain.env_origins[env_ids]
+            robot.write_root_pose_to_sim(root_state[:, :7])
+            #robot.write_root_velocity_to_sim(torch.tensor([[200,-200,200,-200,0,0]]))
+            robot.reset()
+            robot.write_data_to_sim()
+            for i in range(10):
+                sim.step()
+            #camera.update(dt=sim_dt)
+            robot.update(dt=sim_dt)
+            vp_api = get_active_viewport()
+            capture_viewport_to_file(vp_api, os.path.join(save_img_folder, folder_name, f"vis_{index:02d}_{i_point:02d}.png"))
+        
+        for i in range(20):
+            vp_api = get_active_viewport()
+            capture_viewport_to_file(vp_api, os.path.join(save_img_folder, folder_name, f"vis_{index:02d}_{i+80:02d}.png"))
+        #crazyflie_prim = get_prim_at_path(prim_path="/World/Robot")
+        #crazyflie_prim.set_world_pose(translation=new_positions.cpu().numpy(), orientation=np.array([1., 0., 0., 0.]))        
     all_points = np.vstack(all_points)
     all_colors = np.vstack(all_colors)
 
@@ -626,8 +713,8 @@ def _get_observations(probability_grid, rgb_image, pose, obv_face):
 def make_env():
     """Play with stable-baselines agent."""
     # directory for logging into
-    log_root_path = os.path.join("logs", "sb3", args_cli.task)
-    log_root_path = os.path.abspath(log_root_path)
+    #log_root_path = os.path.join("logs", "sb3", args_cli.task)
+    #log_root_path = os.path.abspath(log_root_path)
 
     # check checkpoint is valid
     if args_cli.checkpoint is None:
@@ -641,7 +728,26 @@ def make_env():
 
     # create agent from stable baselines
     print(f"Loading checkpoint from: {checkpoint_path}")
-    
+    # create isaac environment
+    '''
+    env_cfg = parse_env_cfg(
+        args_cli.task, device=args_cli.device, num_envs=args_cli.num_envs, use_fabric=not args_cli.disable_fabric
+    )
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    # wrap for video recording
+    if args_cli.video:
+        video_kwargs = {
+            "video_folder": os.path.join(log_dir, "videos", "play"),
+            "step_trigger": lambda step: step == 0,
+            "video_length": args_cli.video_length,
+            "disable_logger": True,
+        }
+        print("[INFO] Recording videos during training.")
+        print_dict(video_kwargs, nesting=4)
+        env = gym.wrappers.RecordVideo(env, **video_kwargs)
+    # wrap around environment for stable baselines
+    env = Sb3VecEnvWrapper(env)
+    '''
     agent = PPO_Cus.load(checkpoint_path, print_system_info=True) 
     return agent
 
@@ -651,6 +757,16 @@ def delete_prim_and_children(prim_path, stage):
         for child in prim.GetChildren():
             delete_prim_and_children(child.GetPath().pathString, stage)
         delete_prim(prim_path)
+
+def rescale_robot(robot_prim_root, scale_factor):
+    crazyflie_prim = get_prim_at_path(prim_path=robot_prim_root)
+    # Apply the scaling to the geometry itself, keeping the transformation matrix intact
+    for child in crazyflie_prim.GetChildren():
+        geom_xform = UsdGeom.Xformable(child)
+        geom_xform.ClearXformOpOrder()  # Clear any existing transformations
+        scale_op = geom_xform.AddScaleOp()
+        scale_op.Set(Gf.Vec3f(scale_factor, scale_factor, scale_factor))
+        print(f"Applied scaling factor to child: {child.GetPath()}")
 
 def main():
     # Define the input file
@@ -695,7 +811,7 @@ def main():
     # world initialization
     world = World(stage_units_in_meters=1.0, backend="torch", device="cpu")
     # user viewport
-    set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8]))
+    set_camera_view(eye=np.array([35, 35, 60]), target=np.array([-15, 15, 15]))
     # create agent
     agent = make_env()
     
@@ -718,10 +834,45 @@ def main():
         width=CAMERA_WIDTH,
         height=CAMERA_HEIGHT
     )
+    
+    CRAZYFLIE_CFG = ArticulationCfg(
+        prim_path="/World/Robot",
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Robots/Crazyflie/cf2x.usd",
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                disable_gravity=True, # won't drop
+            ),
+            articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                enabled_self_collisions=False,
+            ),
+            copy_from_source=False, # mirror
+        ),
+        init_state=ArticulationCfg.InitialStateCfg(
+            pos=(0.0, -9.0, 6.0),
+            joint_pos={
+                ".*": 0.0,
+            },
+            joint_vel={
+                "m1_joint": 200.0,
+                "m2_joint": -200.0,
+                "m3_joint": 200.0,
+                "m4_joint": -200.0,
+            },
+        ),
+        actuators={
+            "dummy": ImplicitActuatorCfg(
+                joint_names_expr=[".*"],
+                stiffness=0.0,
+                damping=0.0,
+            ),
+        },
+    )
+
     scene_entities = {}
     scene_entities[f"camera_0"] = Camera(cameraCfg)
-
-
+    scene_entities["robot_0"] = Articulation(CRAZYFLIE_CFG)
+    
+    rescale_robot("/World/Robot", 20)
     # start scan the shapes
     for i, (scene_path, hollow_occ_path, fill_occ_set_path, faces_path, pcd_path) in enumerate(scene_paths):
         print(f"{i}: {scene_path}")

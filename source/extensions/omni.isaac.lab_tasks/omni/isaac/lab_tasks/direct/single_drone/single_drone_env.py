@@ -8,7 +8,7 @@ from __future__ import annotations
 import torch
 import pickle
 import gymnasium as gym
-
+import pandas as pd
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import Articulation
@@ -32,7 +32,8 @@ import numpy as np
 import omni.isaac.core.utils.numpy.rotations as rot_utils
 import matplotlib.pyplot as plt
 import omni
-from .mad3d_utils import check_building_collision, rescale_scene, compute_orientation, create_blocks_from_occupancy, OccupancyGrid, get_seen_face, remove_occluded_face, check_free, shift_gt_occs, shift_gt_faces, shift_occs, check_height, compute_weighted_centroid
+from .mad3d_utils import check_building_collision, rescale_robot, rescale_scene, compute_orientation, create_blocks_from_occupancy, OccupancyGrid, get_seen_face, remove_occluded_face, check_free, shift_gt_occs, shift_gt_faces, shift_occs, check_height, compute_weighted_centroid
+from omni.isaac.core.utils.viewports import set_camera_view
 
 
 class MAD3DEnv(DirectRLEnv):
@@ -61,7 +62,8 @@ class MAD3DEnv(DirectRLEnv):
         self.episode_rec["yaw"] = [[] for i in range(self.num_envs)]
 
     def _setup_scene(self):
-        
+        set_camera_view(eye=np.array([40, 40, 60]), target=np.array([-15, 15, 8])) 
+        #rescale_robot("/World/envs/env_0/Robot",10)
         self.cfg.num_envs = self.num_envs
 
         # (n_env, xyz)
@@ -147,7 +149,7 @@ class MAD3DEnv(DirectRLEnv):
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         # make sure every scene has floor
-        rescale_scene(scene_prim_root="/World/ground/Environment", max_len=13e4)
+        #rescale_scene(scene_prim_root="/World/ground/Environment", max_len=13e4)
  
         # prevent mirror
         self.scene.clone_environments(copy_from_source=True)
@@ -155,6 +157,8 @@ class MAD3DEnv(DirectRLEnv):
         # robot
         self._robot = Articulation(self.cfg.robot)
         self.scene.articulations["robot"] = self._robot
+        rescale_robot("/World/envs/env_0/Robot",10)
+        #self.scene.add_ground_plane(size=40.0, color=torch.tensor([52.0 / 255.0, 195.0 / 255.0, 235.0 / 255.0])) 
         # sensor
         self._camera = TiledCamera(self.cfg.camera)
         self.scene.sensors["camera"] = self._camera
@@ -172,7 +176,7 @@ class MAD3DEnv(DirectRLEnv):
         # load paths for scenes
         # (usd_path, hollow_occ_path, fill_occ_set_path, faces_path, usdfilecfg)
         self.scene_paths = []
-        train_file = os.path.join(self.cfg.data_root, "preprocess", "train.txt")
+        train_file = os.path.join(self.cfg.data_root, "test.txt")
         
         """
         self.files = []
@@ -301,11 +305,52 @@ class MAD3DEnv(DirectRLEnv):
 
         self.last_face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
 
+    def batch_linear_interpolation_torch(self, start_points, end_points, num_points=100):
+        """
+        Performs linear interpolation for multiple pairs of 3D points in a batch using PyTorch tensors.
+
+        Args:
+            start_points (torch.Tensor): Tensor of starting coordinates, shape (N, 3).
+            end_points (torch.Tensor): Tensor of ending coordinates, shape (N, 3).
+            num_points (int): Number of points to interpolate including the start and end.
+
+        Returns:
+            dict of pandas.DataFrame: Dictionary with DataFrames of interpolated points for each pair.
+        """
+        results = {}
+        batch_size = start_points.shape[0]
+
+        # Generate interpolation fractions
+        t_values = torch.linspace(0, 1, steps=num_points).unsqueeze(1).to(start_points.device)
+
+        for i in range(batch_size):
+            # Linear interpolation for the current pair
+            interpolated_points = (1 - t_values) * start_points[i] + t_values * end_points[i]
+
+        return interpolated_points
 
     def _apply_action(self):
         env_ids = torch.arange(self.num_envs).to(self.device)
 
         target_position = self._xyz
+        interpolated_xyz = self.batch_linear_interpolation_torch(self.old_position, self.old_position)
+        #import pdb; pdb.set_trace()
+        
+        for xyz in interpolated_xyz:
+            root_state = torch.ones((self.num_envs, 13)).to(self.device) * 0
+            root_state[:, :3] = xyz
+            #root_state[:,3:7] = target_orientation
+            
+            root_state[:, :3] += self._terrain.env_origins[env_ids]
+            self._robot.write_root_pose_to_sim(root_state[:, :7], env_ids)
+            self._robot.write_root_velocity_to_sim(root_state[:, 7:], env_ids)
+
+            for i in range(3):
+                self.sim.step()
+                self.scene.update(dt=0)
+        
+        
+        self._old_position = self._xyz
         pitch_radians = self._pitch
         yaw = self._yaw
         # roll, pitch, yaw
@@ -455,7 +500,7 @@ class MAD3DEnv(DirectRLEnv):
                     for i in range(self.cfg.grid_size):
                         # vis occ
                         create_blocks_from_occupancy(j, self._terrain.env_origins[j].cpu().numpy(), 
-                                                     vis_occ[j, :, :, i], self.cell_size, i*self.slice_height, i, self.cfg.env_size, 2, 60)
+                                                     vis_occ[j, :, :, i], self.cell_size, i*self.slice_height, i, self.cfg.env_size, 2, 25)
 
 
         hard_occ = torch.where(self.obv_occ[:, :, :, :, 0] >= 0.6, 1, 0)
@@ -575,7 +620,7 @@ class MAD3DEnv(DirectRLEnv):
         self._robot.reset(env_ids)
         super()._reset_idx(env_ids)
 
-
+        '''
         # Logging
         extras = dict()
         for key in self._episode_sums.keys():
@@ -601,7 +646,7 @@ class MAD3DEnv(DirectRLEnv):
 
         self.extras["log"] = dict()
         self.extras["log"].update(extras)
-
+        '''
         # reset step
         self.env_step[env_ids] = 0
         # reset pose history
@@ -626,7 +671,7 @@ class MAD3DEnv(DirectRLEnv):
         # clear building
         for env_id in env_ids:
             delete_prim(f'/World/envs/env_{env_id}/Scene')
-                                
+        delete_prim(f'/World/OccupancyBlocks')                    
         # object translation vector
         if self.cfg.random_trans_obj:     
             # random translation
@@ -701,6 +746,7 @@ class MAD3DEnv(DirectRLEnv):
             orientation_camera = orientation_camera.repeat(len(env_ids), 1)
 
             self._camera.set_world_poses(new_positions, orientation_camera, env_ids)
+            self.old_position = new_positions
 
             # record robot pos and pitch, yaw
             self.robot_pos[env_ids] = target_position + self._terrain.env_origins[env_ids]
