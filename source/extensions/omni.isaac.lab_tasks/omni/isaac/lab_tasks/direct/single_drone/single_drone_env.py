@@ -32,7 +32,7 @@ import numpy as np
 import omni.isaac.core.utils.numpy.rotations as rot_utils
 import matplotlib.pyplot as plt
 import omni
-from .mad3d_utils import check_building_collision, rescale_scene, compute_orientation, create_blocks_from_occupancy, OccupancyGrid, get_seen_face, remove_occluded_face, check_free, shift_gt_occs, shift_gt_faces, shift_occs, check_height, compute_weighted_centroid
+from .mad3d_utils import check_building_collision, rescale_scene, compute_orientation, create_blocks_from_occupancy, OccupancyGrid, get_seen_face, remove_occluded_face, check_free, shift_gt_occs, shift_gt_faces, shift_occs, check_height, compute_weighted_centroid, compute_unseen_occupied_centroid
 
 
 class MAD3DEnv(DirectRLEnv):
@@ -139,6 +139,7 @@ class MAD3DEnv(DirectRLEnv):
 
         # previous face ratio
         self.last_face_ratio = torch.zeros(self.cfg.num_envs, device=self.device).reshape(-1, 1)
+        self.last_coverage_ratio = torch.zeros(self.cfg.num_envs, device=self.device).reshape(-1, 1)
         # face ratio
         self.face_ratio = torch.zeros(self.cfg.num_envs,  device=self.device).reshape(-1, 1)
 
@@ -289,7 +290,19 @@ class MAD3DEnv(DirectRLEnv):
         self._pitch = torch.clamp(self._pitch, min=-torch.pi/3, max=torch.pi/2)
 
         self.last_face_ratio = (torch.sum(torch.logical_and(self.obv_face[:, :, :, 1:, :], self.gt_faces[:, :, :, 1:, :]),(1,2,3,4))/torch.sum(self.gt_faces[:, :, :, 1:, :], (1,2,3,4))).reshape(-1, 1)
+        
 
+        hard_occ = torch.where(self.obv_occ[:, :, :, :, 0] >= 0.6, 1, 0)
+
+        # remove the occluded face by checking current occ grid
+        # the face amount may still larger than gt because current occ grid is incomplete
+        #self.obv_face = remove_occluded_face(self.cfg.grid_size, hard_occ, self.obv_face, self.device)
+
+        # compute coverage ratio
+        hard_occ = hard_occ[:, :, :, 1:]
+        num_match_occ = torch.sum(torch.logical_and(hard_occ, self.gt_occs[:, :, :, 1:]), dim=(1, 2, 3))
+        total_occ = torch.sum(self.gt_occs[:, :, :, 1:], dim=(1, 2, 3))
+        self.last_coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
 
     def _apply_action(self):
         env_ids = torch.arange(self.num_envs).to(self.device)
@@ -345,7 +358,7 @@ class MAD3DEnv(DirectRLEnv):
         # N, 1, H, W
         self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=0., high=1., shape=(1, self.cfg.camera_h, self.cfg.camera_w))
         # N, 10 (occ + coords + face occ), x, y, z
-        self.single_observation_space["policy"]["occ"] = gym.spaces.Box(low=-1., high=1., shape=(10, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size))
+        self.single_observation_space["policy"]["occ"] = gym.spaces.Box(low=-1., high=1., shape=(4, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size))
         # N, 1
         self.single_observation_space["policy"]["env_size"] = gym.spaces.Box(low=-100., high=100., shape=(1,))
         # N, 3
@@ -499,9 +512,10 @@ class MAD3DEnv(DirectRLEnv):
         # img: N, H, W, 1
         gray_scale_img = torch.mean(self.obv_imgs[:, 0, :, :, :], (3))
 
-        center = compute_weighted_centroid(occ_face[:, :, :, 1:, 4:], self.gt_faces[:, :, :, 1:, :])
+        center = compute_unseen_occupied_centroid(occ_face[:, :, :, 1:, 0], self.gt_occs[:, :, :, 1:])
         center /= occ_face.shape[1]
 
+        occ_face = occ_face[:, :, :, :, :4]
 
         obs = {"pose_step": pose_step,
                "img": gray_scale_img.reshape(-1, 1, self.cfg.camera_h, self.cfg.camera_w),
@@ -520,12 +534,12 @@ class MAD3DEnv(DirectRLEnv):
         col_mask = (torch.tensor(self.col)==False).float().to(self.device).reshape(-1, 1)
         # if collision, no information gain, not free, or exceeding height limit
         # all_mask is False
-        all_mask = ((torch.tensor(self.col).bool() | (self.face_ratio==self.last_face_ratio).reshape(-1).bool().cpu() | torch.tensor(self.not_free).bool() | torch.tensor(self.not_height).bool())==False).float().to(self.device).reshape(-1, 1)
+        all_mask = ((torch.tensor(self.col).bool() | (self.coverage_ratio==self.last_coverage_ratio).reshape(-1).bool().cpu() | torch.tensor(self.not_free).bool() | torch.tensor(self.not_height).bool())==False).float().to(self.device).reshape(-1, 1)
 
         rewards = {
-            "face_ratio": (self.face_ratio-self.last_face_ratio) * col_mask * 30,
+            "face_ratio": (self.coverage_ratio-self.last_coverage_ratio) * col_mask * 30,
             "all_penalty": (1.0-all_mask)*-1,
-            "goal": (self.face_ratio >= self.cfg.goal).reshape(-1, 1) * 100.
+            "goal": (self.coverage_ratio >= self.cfg.goal).reshape(-1, 1) * 100.
         }
 
         for k in rewards.keys():
@@ -553,7 +567,7 @@ class MAD3DEnv(DirectRLEnv):
         time_out = self.episode_length_buf >= self.max_episode_length-1
 
         # done when exceeding the max steps or reaching goal face coverage ratio
-        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.face_ratio.squeeze() >= self.cfg.goal)
+        done = torch.logical_or(self.env_step.to(self.device) >= self.cfg.total_img - 1, self.coverage_ratio.squeeze() >= self.cfg.goal)
 
         return done, time_out
 
@@ -604,6 +618,8 @@ class MAD3DEnv(DirectRLEnv):
         self.obv_face[env_ids] = 0
         # reset last face ratio
         self.last_face_ratio[env_ids] = 0
+        # reset last face ratio
+        self.last_coverage_ratio[env_ids] = 0
         # reset actions
         self._actions[env_ids] = 0.0
         # Reset robot state

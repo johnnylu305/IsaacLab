@@ -18,7 +18,7 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_nogreedy_shift'
+CAMERA_FOLDER = 'camera_image_noface_shift'
 
 
 # define crazyflie
@@ -91,7 +91,7 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     num_states = 0 
     episode_length_s = 20000 # timeout
     total_img = 50 # timeout
-    goal = 0.9 # coverage ratio
+    goal = 0.96 # coverage ratio
 
     # probability occupancy grid
     decrement = 0.01

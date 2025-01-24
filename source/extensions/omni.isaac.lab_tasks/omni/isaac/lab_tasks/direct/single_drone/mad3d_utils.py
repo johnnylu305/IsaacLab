@@ -6,6 +6,54 @@ from pxr import UsdGeom, Usd, Gf, Sdf
 import open3d as o3d
 
 
+
+def compute_unseen_occupied_centroid(gt_occs, occ_face):
+    """
+    Compute the centroid of unseen occupied voxels in the ground truth for each environment.
+
+    Args:
+        gt_occs (torch.Tensor): Ground truth occupancy grid (n_envs, x, y, z), where 1 indicates occupied.
+        occ_face (torch.Tensor): Probabilistic occupancy grid (n_envs, x, y, z),
+                                 values larger than 0.6 are considered occupied.
+
+    Returns:
+        torch.Tensor: Centroid coordinates (n_envs, 3) containing the average x, y, z
+                      positions of unseen occupied voxels for each environment.
+    """
+    # Threshold occupancy grid to identify occupied voxels
+    occ_mask = occ_face > 0.6  # Occupied where prob > 0.6
+
+    # Identify unseen occupied voxels in the ground truth
+    unseen_occ_mask = (gt_occs.bool()) & (~occ_mask)
+
+    # Create a grid of coordinates
+    n_envs, x_dim, y_dim, z_dim = gt_occs.shape
+    coords = torch.stack(torch.meshgrid(
+        torch.arange(x_dim, device=gt_occs.device),
+        torch.arange(y_dim, device=gt_occs.device),
+        torch.arange(z_dim, device=gt_occs.device),
+        indexing='ij'
+    ), dim=-1).float()  # Shape: (x, y, z, 3)
+
+    # Expand coords to match n_envs
+    coords = coords.unsqueeze(0).expand(n_envs, -1, -1, -1, -1)  # Shape: (n_envs, x, y, z, 3)
+
+    # Compute centroid for each environment
+    centroids = []
+    for env_idx in range(n_envs):
+        env_mask = unseen_occ_mask[env_idx]  # Mask for current environment
+        env_coords = coords[env_idx][env_mask]  # Filter coords for unseen occupied
+        if env_coords.shape[0] == 0:  # Avoid division by zero
+            centroids.append(torch.tensor([float('nan'), float('nan'), float('nan')], device=gt_occs.device))
+        else:
+            centroids.append(env_coords.mean(dim=0))
+    
+    # Combine centroids into a single tensor
+    centroids = torch.stack(centroids, dim=0)  # Shape: (n_envs, 3)
+
+    return centroids
+
+
 def compute_weighted_centroid(obv_occ, gt_occ):
     """
     Compute the weighted centroid of XYZ from gt_occ, ignoring faces already observed in obv_occ.

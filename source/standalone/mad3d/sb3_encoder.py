@@ -35,7 +35,7 @@ class SelfAttention3D(nn.Module):
 
 
 class ProposalNet(nn.Module):
-    def __init__(self, input_channels=10, grid_size=(20, 20, 20)):
+    def __init__(self, input_channels=4, grid_size=(20, 20, 20)):
         super(ProposalNet, self).__init__()
 
         # (Unchanged) 3D CNN architecture
