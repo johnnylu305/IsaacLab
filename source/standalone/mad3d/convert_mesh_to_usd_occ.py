@@ -54,9 +54,9 @@ from omni.isaac.lab.utils.assets import check_file_path
 from omni.isaac.lab.utils.dict import print_dict
 
 # normalize the max side of the 3D shape to max_len
-MAX_LEN = 2 #8
+MAX_LEN = 1.6 #2
 # env and grid size
-ENV_SIZE = 2.8 #20 #10
+ENV_SIZE = 2.6
 GRID_SIZE = 20
 
 

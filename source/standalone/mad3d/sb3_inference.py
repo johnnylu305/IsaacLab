@@ -54,12 +54,12 @@ from sb3_ppo_cus import PPO_Cus
 NUM_STEPS = 30 #15
 NUM_ENVS = 1
 GRID_SIZE = 20
-ENV_SIZE = 20
+ENV_SIZE = 2.6 #20
 TRANS = args_cli.trans
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CAMERA_OFFSET = [0, 0, 0]
 # camera initial position
-INITIAL_POSE = [0, -9, 6] #[10, 10, 2]
+INITIAL_POSE = [0, 2.2, 1.0] #[0, -9, 6]
 # Sensor"
 CAMERA_HEIGHT = 900 #600
 CAMERA_WIDTH = 900 #600
@@ -326,7 +326,15 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
 
         camera_ori = camera.data.quat_w_ros.clone()
         camera_ori = convert_camera_frame_orientation_convention(camera_ori, origin="ros", target="world")
+        # the range here is 0 ~ 2pi
         roll, pitch, yaw = euler_xyz_from_quat(camera_ori)
+
+        #print(f"Before {roll}, {pitch}, {yaw}")
+        roll = (roll + torch.pi) % (2 * torch.pi) - torch.pi
+        pitch = (pitch + torch.pi) % (2 * torch.pi) - torch.pi
+        yaw = (yaw + torch.pi) % (2 * torch.pi) - torch.pi
+        #print(f"After {roll}, {pitch}, {yaw}")
+        #print("")
 
         if index==0:
             pose = torch.tensor([INITIAL_POSE + [pitch, yaw]]).to(DEVICE)
@@ -334,6 +342,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             pose[0, :3] = new_positions
             pose[0, 3] = pitch
             pose[0, 4] = yaw
+
 
         # depth image
         depth_image = torch.clamp(camera.data.output["distance_to_image_plane"], 0, env_size * 4)
@@ -401,11 +410,11 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             print("Acc:", accuracy)
 
         if index <= 20:
-            hl = 10
+            hl = 2.0 #10
         elif index <= 25:
-            hl = 5
+            hl = 1.0 #5
         elif index <= 30:
-            hl = 2
+            hl = 0.5 #2
 
         # get observation 
         obs = _get_observations(probability_grid, rgb_image, pose.clone(), obv_face, hl=hl)
@@ -422,7 +431,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
                 
         # save data
         x, y, z = pose[0, :3]
-        _yaw, _pitch = pose[0, 3:]
+        _pitch, _yaw = pose[0, 3:]
         coverage_ratio = coverage_ratio.cpu().numpy()[0][0]
         suffix = f"_{index}_{x:.2f}_{y:.2f}_{z:.2f}_{_yaw:.2f}_{_pitch:.2f}_{coverage_ratio:.2f}.png"
         plt.imsave(os.path.join(save_img_folder, folder_name, 'depth'+suffix),
@@ -563,7 +572,8 @@ def process_action(actions):
     target_position = _xyz #_xyz
     pitch_radians = _pitch
     yaw = _yaw
-    
+       
+ 
     # roll, pitch, yaw
     target_orientation = rot_utils.euler_angles_to_quats(torch.cat([torch.zeros(yaw.shape[0],1), pitch_radians.unsqueeze(1).cpu(), yaw.cpu().unsqueeze(1)],dim=1).numpy(), degrees=False)
     # setup camera position
@@ -573,6 +583,8 @@ def process_action(actions):
     z_new = _xyz[:, 2] + CAMERA_OFFSET[2]
 
     new_positions = torch.stack([x_new, y_new, z_new], dim=1)
+
+    #print("action", _pitch, _yaw)
 
     return new_positions, orientation_camera, _yaw, _pitch
 

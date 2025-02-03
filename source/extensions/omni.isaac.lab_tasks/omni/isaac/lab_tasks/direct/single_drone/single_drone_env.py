@@ -254,7 +254,8 @@ class MAD3DEnv(DirectRLEnv):
             self.gt_faces[i] = shift_gt_faces(self.gt_faces[i], self.txyz[i], self.cfg.grid_size, self.cfg.env_size)
 
         # current height limit
-        self.h_limit = (torch.ones(self.cfg.num_envs).to(self.device)*10*self.cfg.grid_size/self.cfg.env_size).int()
+        #self.h_limit = (torch.ones(self.cfg.num_envs).to(self.device)*10*self.cfg.grid_size/self.cfg.env_size).int()
+        self.h_limit = (torch.ones(self.cfg.num_envs).to(self.device)*1.3*self.cfg.grid_size/self.cfg.env_size).int()
         
         self.lookatxyz = torch.zeros((self.cfg.num_envs, 3))
 
@@ -724,9 +725,12 @@ class MAD3DEnv(DirectRLEnv):
                 # find free position
                 while flag:
                     # randomly sample a point within the range
-                    x = random.randint(-self.cfg.env_size//2+1, self.cfg.env_size//2-1)
-                    y = random.randint(-self.cfg.env_size//2+1, self.cfg.env_size//2-1)
-                    z = random.randint(1, int(self.cfg.env_size/2*0.6))
+                    #x = random.randint(-self.cfg.env_size//2+1, self.cfg.env_size//2-1)
+                    #y = random.randint(-self.cfg.env_size//2+1, self.cfg.env_size//2-1)
+                    #z = random.randint(1, int(self.cfg.env_size/2*0.6))
+                    x = random.choice(np.linspace(-self.cfg.env_size//2, self.cfg.env_size//2, 10))
+                    y = random.choice(np.linspace(-self.cfg.env_size//2, self.cfg.env_size//2, 10))
+                    z = random.choice(np.linspace(0.5, 1.5, 10))
                     pos = (x, y, z)
 
                     target_x, target_y, target_z = self.txyz[env_id].cpu().numpy()
@@ -734,7 +738,7 @@ class MAD3DEnv(DirectRLEnv):
                     distance = np.sqrt((x - target_x)**2 + (y - target_y)**2 + (z - target_z)**2)
 
                     # check if the distance is within the allowed range
-                    if distance < 5.5:
+                    if distance < 0.5: #5.5:
                         continue  # if not, sample again
 
                     # get voxel coordinate
@@ -754,7 +758,7 @@ class MAD3DEnv(DirectRLEnv):
 
                 # from initial h to max h
                 # in voxel coordinate
-                self.h_limit[env_id] = random.randint(int(random_position[2] * self.cfg.grid_size/self.cfg.env_size), 10)
+                self.h_limit[env_id] = random.randint(int(random_position[2] * self.cfg.grid_size/self.cfg.env_size), 13)
                 if random.random() <= 0.9: 
                     self.h_limit[env_id] = random.randint(9, 10)
 

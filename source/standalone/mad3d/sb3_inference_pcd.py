@@ -328,6 +328,11 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         camera_ori = convert_camera_frame_orientation_convention(camera_ori, origin="ros", target="world")
         roll, pitch, yaw = euler_xyz_from_quat(camera_ori)
 
+        roll = (roll + torch.pi) % (2 * torch.pi) - torch.pi
+        pitch = (pitch + torch.pi) % (2 * torch.pi) - torch.pi
+        yaw = (yaw + torch.pi) % (2 * torch.pi) - torch.pi
+
+
         if index==0:
             pose = torch.tensor([INITIAL_POSE + [pitch, yaw]]).to(DEVICE)
         else:

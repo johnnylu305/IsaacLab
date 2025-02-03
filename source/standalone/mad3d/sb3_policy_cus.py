@@ -47,12 +47,17 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
     # set 26 neighbors to occupied 
     # shoud not use 0.5 which may contain a lot of unknown voxels
     high_value_mask = (prob_grid >= 0.6).float()  # Shape: (n_env, x, y, z)
+    high_value_mask[:, :, :, 0] = 1 # Floor to 1
     # Step 2: Apply 3D max pooling to find neighbors
-    pooled = F.max_pool3d(high_value_mask.unsqueeze(1), kernel_size=3, stride=1, padding=1)
+    #pooled = F.max_pool3d(high_value_mask.unsqueeze(1), kernel_size=3, stride=1, padding=1)
+    # Step 2: Use a single large-kernel max pooling
+    pooled = F.max_pool3d(high_value_mask.unsqueeze(1), kernel_size=9, stride=1, padding=4)  # Expands by 4-nearest
     # Step 3: Create a neighbor mask by excluding the original high-value voxels
     neighbor_mask = (pooled.squeeze(1) > 0) & (prob_grid < 0.6)
     # Step 4: Update the prob_grid by setting identified neighbor voxels to 0.5
     prob_grid[neighbor_mask] = 0.5
+
+    #print("aaaaaaaaaaaaa", th.unique(prob_grid[1, :, :, :3] >= 0.5))
 
     # Convert actions to world coordinates
     action_scale_factors = th.tensor([env_size/2.0-1e-3, env_size/2.0-1e-3, env_size/2.0-1e-3]).to(device)
@@ -85,11 +90,15 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
     # Check if each action is already in a free voxel
     is_world_action_free = free_mask.gather(1, flat_indices.unsqueeze(1)).squeeze(1)
 
+    #print("bbbbbbbbbbbbbbbbb", is_world_action_free[1])
+
     # Compute distances from actions to each voxel center in world space
     distances = th.norm(coords.unsqueeze(0) - world_actions.unsqueeze(1), dim=2)  # Shape (num_env, n^3)
 
     # Mask out non-free voxels by setting large distances for occupied voxels
     masked_distances = distances + (1 - free_mask) * 1e6
+
+    #print("ffffffffffff", th.unique(free_mask[1]))
 
     # Find the nearest free voxel for occupied actions only
     nearest_indices = masked_distances.argmin(dim=1)
@@ -101,6 +110,8 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
 
     # Convert new_world_actions back to [-1, 1] range in voxel space
     new_actions = (new_world_actions / action_scale_factors) - action_offset
+
+    #print("cccccccccccccccccccccc", new_actions[1])
 
     return new_actions
 

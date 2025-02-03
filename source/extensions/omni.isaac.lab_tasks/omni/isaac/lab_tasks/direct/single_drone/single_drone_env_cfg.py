@@ -15,10 +15,10 @@ from omni.isaac.lab.sensors import TiledCamera, TiledCameraCfg
 
 # env
 GRID_SIZE = 20
-ENV_SIZE = 20
+ENV_SIZE = 2.6 #20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_obja_final_oldlrsch'
+CAMERA_FOLDER = 'camera_image_envsize2.6_notrans_v0'
 
 
 # define crazyflie
@@ -61,7 +61,7 @@ CRAZYFLIE_CFG = ArticulationCfg(
 class MAD3DEnvCfg(DirectRLEnvCfg):
 
     # data
-    data_root = os.path.join(os.path.abspath(os.sep), "home", "dsr", "Documents", "mad3d", "New_Dataset20", "objaverse")
+    data_root = os.path.join(os.path.abspath(os.sep), "home", "dsr", "Documents", "mad3d", "New_Dataset3", "objaverse")
     camera_folder = CAMERA_FOLDER
 
     # env
@@ -74,10 +74,11 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     default_init_pos = DEFAULT_INIT_POS    
 
     # randomly translate the object
-    random_trans_obj = True
+    random_trans_obj = False #True
     # x, y translation range in meter
-    trans_obj_x = [-4, 4] #[-2, 2] 
-    trans_obj_y = [-4, 4] #[-2, 2]
+    # some shapes will exceed boundary
+    trans_obj_x = [-1, 1] #[-4, 4] 
+    trans_obj_y = [-1, 1] #[-4, 4]
     
     # randomly sample n object
     random_sample_obj = True
@@ -101,7 +102,7 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
 
     # sensor
     # TODO: tune offset?
-    camera_offset = [0.1, 0.0, 0.0]
+    camera_offset = [0.05, 0.0, 0.0]
     camera_w, camera_h = 300, 300
 
     # obv
@@ -119,7 +120,7 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     # save images for these environments
     save_env_ids = [0, 1]
     # save frequency (episode)
-    save_img_freq = 30
+    save_img_freq = 10 #30
 
     # simulator
     decimation = 2 # _apply_action will run decimation time

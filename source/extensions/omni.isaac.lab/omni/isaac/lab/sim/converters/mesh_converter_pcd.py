@@ -27,7 +27,7 @@ import open3d as o3d
 from PIL import Image
 
 
-VOXEL_SCALE = 0.12
+#VOXEL_SCALE = 0.12
 
 
 class MeshConverterMAD3DPointCloud(AssetConverterBase):
