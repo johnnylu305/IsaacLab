@@ -77,7 +77,7 @@ if __name__ == "__main__":
     parser.add_argument("--pointcloud", required=True, help="Path to the folder containing the point cloud PLY files.")
     parser.add_argument("--occ", required=True, help="Path to the folder containing the occupancy grid files.")
     parser.add_argument("--output", required=True, help="Path to the folder to save the filtered point cloud PLY files.")
-    parser.add_argument("--mode", type=str, choices=["objaverse", "house3k", "other"], required=True, help="Mode to specify the dataset type.")
+    parser.add_argument("--mode", type=str, choices=["objaverse", "house3k", "omniobject3d", "other"], required=True, help="Mode to specify the dataset type.")
 
 
     args = parser.parse_args()
@@ -100,14 +100,16 @@ if __name__ == "__main__":
             print(f"Warning: No matching directory found for {base_subdir} in {args.occ}. Skipping {ply_file}.")
             continue
 
-        if args.mode != "objaverse":
+        if args.mode != "objaverse" and args.mode != "omniobject3d":
             # Locate the fill_occ_set.pkl in the matched directory
             occ_file = os.path.join(occ_dirs[0], base_subdir, "hollow_occ.npy")
+        elif args.mode == "omniobject3d":
+            occ_file = os.path.join(occ_dirs[0], base_subdir, base_subdir, "hollow_occ.npy")
         else:
-            occ_file = os.path.join(occ_dirs[0], "hollow_occ.npy")           
+            occ_file = os.path.join(occ_dirs[0], "hollow_occ.npy")
 
         if not os.path.isfile(occ_file):
-            print(f"Warning: No fill_occ_set.pkl found in {pkl_dirs[0]}. Skipping {ply_file}.")
+            print(f"Warning: No fill_occ_set.pkl found in {occ_file}. Skipping {ply_file}.")
             continue
 
         # Load point cloud from PLY file

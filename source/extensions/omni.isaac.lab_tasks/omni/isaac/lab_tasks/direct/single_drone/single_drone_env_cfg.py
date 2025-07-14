@@ -18,7 +18,8 @@ GRID_SIZE = 20
 ENV_SIZE = 20
 USED_NEAREST = True
 DEFAULT_INIT_POS = [ENV_SIZE/2-1, ENV_SIZE/2-1, ENV_SIZE/4-1]
-CAMERA_FOLDER = 'camera_image_envsize20_obja_final_oldlrsch'
+# TODO: Change this back later
+CAMERA_FOLDER = 'camera_image_corl_final_test' #'camera_image_envsize20_obja_final_oldlrsch_h3k'
 
 
 # define crazyflie
@@ -61,7 +62,7 @@ CRAZYFLIE_CFG = ArticulationCfg(
 class MAD3DEnvCfg(DirectRLEnvCfg):
 
     # data
-    data_root = os.path.join(os.path.abspath(os.sep), "home", "dsr", "Documents", "mad3d", "New_Dataset20", "objaverse")
+    data_root = os.path.join(os.path.abspath(os.sep), "home", "dsr", "Documents", "mad3d", "New_Dataset20", "objaverse") #"house3k")
     camera_folder = CAMERA_FOLDER
 
     # env
@@ -76,8 +77,8 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     # randomly translate the object
     random_trans_obj = True
     # x, y translation range in meter
-    trans_obj_x = [-4, 4] #[-2, 2] 
-    trans_obj_y = [-4, 4] #[-2, 2]
+    trans_obj_x = [-4, 4] #[-5, 5] 
+    trans_obj_y = [-4, 4] #[-5, 5]
     
     # randomly sample n object
     random_sample_obj = True

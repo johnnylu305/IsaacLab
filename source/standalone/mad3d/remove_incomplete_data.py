@@ -8,7 +8,7 @@ parser = argparse.ArgumentParser(description="Script to remove invalid folders b
 
 # Add custom arguments
 parser.add_argument("--root_directory", type=str, required=True, help="Path to the root directory to process.")
-parser.add_argument("--mode", type=str, choices=["objaverse", "house3k", "other"], required=True, help="Mode to specify the dataset type.")
+parser.add_argument("--mode", type=str, choices=["objaverse", "house3k", "omniobject3d", "other"], required=True, help="Mode to specify the dataset type.")
 
 # Import AppLauncher and append its CLI arguments
 from omni.isaac.lab.app import AppLauncher
@@ -157,6 +157,81 @@ def remove_house3k_invalid_folders(root_dir):
     print(f"Total invalid folders removed: {count}")
 
 
+def remove_omniobject3d_invalid_folders(root_dir):
+    count = 0
+    # Iterate through top-level object folders (e.g., anise_001, apple_009, etc.)
+    for object_folder in os.listdir(root_dir):
+        object_folder_path = os.path.join(root_dir, object_folder)
+        print(object_folder_path)
+        if not os.path.isdir(object_folder_path):
+            continue
+
+        # The expected nested path is object_folder/Scan/Scan
+        obj = os.path.basename(object_folder_path)
+        nested_scan_path = os.path.join(object_folder_path, obj, obj)
+        if not os.path.isdir(nested_scan_path):
+            print(f"Removing {object_folder_path} due to missing nested Scan/Scan directory.")
+            shutil.rmtree(object_folder_path)
+            count += 1
+            continue
+
+        # Condition 1: Check for the main .usd file (Scan.usd)
+        usd_file = os.path.join(nested_scan_path, f"{obj}.usd")
+        if not os.path.exists(usd_file):
+            print(f"Removing {object_folder_path} due to missing Scan.usd file.")
+            shutil.rmtree(object_folder_path)
+            count += 1
+            continue
+
+        # Condition 2: Check if the folder has the occ.npy file
+        occ_file = os.path.join(nested_scan_path, "occ.npy")
+        if not os.path.exists(occ_file):
+            print(f"Removing {object_folder_path} due to missing occ.npy.")
+            shutil.rmtree(object_folder_path)
+            count += 1
+            continue
+
+        # Condition 3: Check if occupancy grid is empty
+        try:
+            occ_grid = np.load(occ_file)
+            if np.sum(occ_grid[:, :, 1:]) == 0:
+                print(f"Removing {object_folder_path} due to empty occupancy grid.")
+                shutil.rmtree(object_folder_path)
+                count += 1
+                continue
+        except Exception as e:
+            print(f"Error loading occupancy file {occ_file} in {object_folder_path}: {e}")
+            shutil.rmtree(object_folder_path)
+            count += 1
+            continue
+
+        # Condition 4: Check for invalid USD nodes
+        try:
+            stage = Usd.Stage.Open(usd_file)
+            xform_prim = stage.GetDefaultPrim()  # e.g., /Scan
+            # Typically geometry is under /Scan/geometry
+            geometry_prim = stage.GetPrimAtPath(f"/{xform_prim.GetName()}/geometry")
+
+            if geometry_prim:
+                invalid_nodes = [
+                    prim.GetPath().pathString
+                    for prim in geometry_prim.GetChildren()
+                    if prim.GetTypeName() not in ["Mesh", "Scope", "Material", "Shader"]
+                ]
+                if invalid_nodes:
+                    print(f"Removing {object_folder_path} due to invalid nodes under geometry: {invalid_nodes}")
+                    shutil.rmtree(object_folder_path)
+                    count += 1
+                    continue
+        except Exception as e:
+            print(f"Error processing USD file {usd_file} in {object_folder_path}: {e}")
+            shutil.rmtree(object_folder_path)
+            count += 1
+            continue
+
+    print(f"Total invalid folders removed from OmniObject3D dataset: {count}")
+
+
 def get_all_mesh_prim_path(stage, root):
     root_prim = stage.GetPrimAtPath(root)
     stack = [root_prim]
@@ -177,6 +252,8 @@ def main():
         remove_objaverse_invalid_folders(args_cli.root_directory)
     elif args_cli.mode == "house3k":
         remove_house3k_invalid_folders(args_cli.root_directory)
+    elif args_cli.mode == "omniobject3d":
+        remove_omniobject3d_invalid_folders(args_cli.root_directory)
     else:
         print("Mode 'other' is not implemented yet.")
 

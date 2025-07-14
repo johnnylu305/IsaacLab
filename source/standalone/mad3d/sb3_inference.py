@@ -59,7 +59,7 @@ TRANS = args_cli.trans
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 CAMERA_OFFSET = [0, 0, 0]
 # camera initial position
-INITIAL_POSE = [0, -9, 6] #[10, 10, 2]
+INITIAL_POSE = [0, -9, 6] #[0, -19, 19] #[0, -9, 6]
 # Sensor"
 CAMERA_HEIGHT = 900 #600
 CAMERA_WIDTH = 900 #600
@@ -339,7 +339,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             pose[0, :3] = new_positions
             pose[0, 3] = pitch
             pose[0, 4] = yaw
-
+        st = time.time()
         # depth image
         depth_image = torch.clamp(camera.data.output["distance_to_image_plane"], 0, env_size * 4)
         # depth image to local point cloud
@@ -360,27 +360,35 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
                                        torch.floor((camera.data.pos_w[0]+offset)*ratio),
                                        torch.floor((points_3d_world[0] + offset) * ratio))
             grid.update_log_odds(0, torch.floor((points_3d_world[mask] + offset) * ratio), occupied=True)
+            # torch unique is slow, a bug?
+            """
             obv_face = torch.logical_or(obv_face,
                                         get_seen_face(torch.unique(torch.floor((points_3d_world[mask]+offset)*ratio).int(), dim=0),
+                                        torch.floor((camera.data.pos_w+offset)*ratio), GRID_SIZE, DEVICE))
+            """
+            
+            obv_face = torch.logical_or(obv_face,
+                                        get_seen_face(torch.floor((points_3d_world[mask]+offset)*ratio).int(),
                                         torch.floor((camera.data.pos_w+offset)*ratio), GRID_SIZE, DEVICE))
         # probability grid
         probability_grid = grid.log_odds_to_prob().cpu()
 
-        # coverage ratio
+        # coverage ratio    
         hard_occ = torch.where(probability_grid[0, :, :, :] >= 0.6, 1, 0)
         hard_occ = hard_occ[:, :, 1:]
         num_match_occ = torch.sum(torch.logical_and(hard_occ, occ_gt[:, :, 1:]), dim=(0, 1, 2))
         total_occ = torch.sum(occ_gt[:, :, 1:], dim=(0, 1, 2))
         coverage_ratio = (num_match_occ/total_occ).reshape(-1, 1)
-
+    
         # record coverage ratio
         coverage_ratio_rec[scene_id, index] = coverage_ratio.cpu().numpy()[0][0]
         print("Cov:", coverage_ratio[0, 0].item())
-
+        
         # get rgb image
         rgb_image = camera.data.output["rgb"].clone()     
 
         # pcd
+        
         valid_points = points_3d_world[mask].reshape(-1, 3).cpu().numpy()
         valid_colors = torch.transpose(rgb_image[0], 0, 1)[mask.reshape(CAMERA_HEIGHT, CAMERA_WIDTH)].reshape(-1, 3).cpu().numpy()
 
@@ -390,7 +398,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
 
         floor_mask = pcd_gt[:, 2]>(env_size/grid_size)
         pcd_gt = pcd_gt[floor_mask]
-
+        
         # Append valid points and colors to lists
         all_points.append(valid_points)
         all_colors.append(valid_colors)
@@ -404,15 +412,15 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
             accuracy = point_coverage_ratio(acc_points, pcd_gt, 0.1)
             acc_rec[scene_id, index] = accuracy
             print("Acc:", accuracy)
-
+        
         if index <= 20:
-            hl = 10
+            hl = 10 #20
         elif index <= 25:
-            hl = 5
+            hl = 5 #15
         elif index <= 30:
-            hl = 2
+            hl = 2 #7
 
-        # get observation 
+        # get observation
         obs = _get_observations(probability_grid, rgb_image, pose.clone(), obv_face, hl=hl)
         # torch tensor to numpy
         for key, value in obs.items():
@@ -421,6 +429,8 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
         # get prediction
         # (nearest xyz, lookat xyz, real xyz)
         actions, _  = agent.predict(obs, deterministic=True)
+        ed = time.time()
+        print("time", ed-st)
         print(time.perf_counter()-old_time)
         # rescale actions
         new_positions, orientation_camera, yaw, pitch = process_action(actions)
@@ -581,7 +591,7 @@ def process_action(actions):
 
     return new_positions, orientation_camera, _yaw, _pitch
 
-def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
+def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device): 
     rays = camera_xyz - occ_grid_xyz
 
     # Normalize rays
@@ -594,7 +604,6 @@ def get_seen_face(occ_grid_xyz, camera_xyz, grid_size, device):
     for i, face in enumerate(faces):
         dot_product = torch.sum(rays_norm * face, dim=-1)
         face_grid[occ_grid_xyz[:, 0], occ_grid_xyz[:, 1], occ_grid_xyz[:, 2], i] = dot_product > 0 #0.1736
-
     return face_grid
 
 def _get_observations(probability_grid, rgb_image, pose, obv_face, hl=9):

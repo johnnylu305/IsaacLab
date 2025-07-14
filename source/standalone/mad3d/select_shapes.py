@@ -75,6 +75,7 @@ def split_train_test(selected_files, chamfer_distances, train_size, test_size, r
     Split the selected files into train and test sets randomly but non-overlapping,
     and keep the original order when saving.
     """
+    print(train_size + test_size, len(selected_files))
     if train_size + test_size != len(selected_files):
         raise ValueError("Train size and test size must sum to the total number of selected shapes.")
 
