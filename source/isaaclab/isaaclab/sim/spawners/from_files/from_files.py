@@ -25,6 +25,47 @@ from isaaclab.sim.utils import bind_physics_material, bind_visual_material, clon
 if TYPE_CHECKING:
     from . import from_files_cfg
 
+import random
+import isaaclab.sim as sim_utils
+import re
+
+
+def spawn_from_multiple_usd_env_id(
+    prim_path_template: str,
+    env_ids: list,
+    my_asset_list: list[from_files_cfg.UsdFileCfg],
+    translation: tuple[float, float, float] | None = None,
+    orientation: tuple[float, float, float, float] | None = None,
+    is_random: bool = True
+) -> list[Usd.Prim]:
+    source_prim_paths = []
+
+    # prepare source prim path and asset path
+    for env_id in env_ids:
+        prim_path = prim_path_template.replace(".*", f"{env_id}")
+        root_path, asset_path = prim_path.rsplit("/", 1)
+
+        is_regex_expression = re.match(r"^[a-zA-Z0-9/_]+$", root_path) is None
+
+        if is_regex_expression and root_path:
+            source_prim_paths = sim_utils.find_matching_prim_paths(root_path)
+            if not source_prim_paths:
+                raise RuntimeError(
+                    f"Unable to find source prim path: '{root_path}'. Please create the prim before spawning."
+                )
+        else:
+            source_prim_paths.append(root_path)
+
+
+    for i, source_prim_path in enumerate(source_prim_paths):
+        full_prim_path = f"{source_prim_path}/{asset_path}"
+        cfg = my_asset_list[i]
+        print(cfg)
+        print(full_prim_path)
+        prim = _spawn_from_usd_file(full_prim_path, cfg.usd_path, cfg, translation[i], orientation)
+
+    return prim
+
 
 @clone
 def spawn_from_usd(

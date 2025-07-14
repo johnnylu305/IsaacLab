@@ -24,3 +24,6 @@ from .mjcf_converter import MjcfConverter
 from .mjcf_converter_cfg import MjcfConverterCfg
 from .urdf_converter import UrdfConverter
 from .urdf_converter_cfg import UrdfConverterCfg
+# user add
+from .mesh_converter_mad3d import MeshConverterMAD3D
+from .mesh_converter_pcd import MeshConverterMAD3DPointCloud
