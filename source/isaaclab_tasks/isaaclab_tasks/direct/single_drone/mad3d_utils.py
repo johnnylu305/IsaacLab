@@ -267,13 +267,16 @@ class OccupancyGrid:
             self.update_log_odds(i, bresenham_path[mask], occupied=False)
 
 def get_all_mesh_prim_path(root):
+    #print("Root", root)
     root_prim = get_prim_at_path(prim_path=root)
+    #print("Root Prim", root_prim)
     stack = [root_prim]
     mesh_prim_path = []
     # While there are nodes in the stack
     while stack:
         # Pop the last node from the stack
         node = stack.pop()
+        #print("node", node)
         if node.GetTypeName() == "Mesh":
             mesh_prim_path.append(node.GetPath().pathString)
         # Get the children of the current node

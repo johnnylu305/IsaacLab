@@ -147,7 +147,7 @@ class MAD3DEnv(DirectRLEnv):
         self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
         self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
         # make sure every scene has floor
-        rescale_scene(scene_prim_root="/World/ground/Environment", max_len=13e4)
+        rescale_scene(scene_prim_root="/World/ground/terrain/Environment", max_len=13e4)
  
         # prevent mirror
         self.scene.clone_environments(copy_from_source=True)
@@ -354,7 +354,8 @@ class MAD3DEnv(DirectRLEnv):
         # N, 6 (xyz, yaw pitch, height)
         self.single_observation_space["policy"]["pose_step"] = gym.spaces.Box(low=-1., high=1., shape=(6,))
         # N, 1, H, W
-        self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=0., high=1., shape=(1, self.cfg.camera_h, self.cfg.camera_w))
+        # TODO: isaaclab2.1 requires -1~1 instead of 0~1
+        self.single_observation_space["policy"]["img"] = gym.spaces.Box(low=-1., high=1., shape=(1, self.cfg.camera_h, self.cfg.camera_w))
         # N, 10 (occ + coords + face occ), x, y, z
         self.single_observation_space["policy"]["occ"] = gym.spaces.Box(low=-1., high=1., shape=(10, self.cfg.grid_size, self.cfg.grid_size, self.cfg.grid_size))
         # N, 1
@@ -512,7 +513,7 @@ class MAD3DEnv(DirectRLEnv):
 
         center = compute_weighted_centroid(occ_face[:, :, :, 1:, 4:], self.gt_faces[:, :, :, 1:, :])
         center /= occ_face.shape[1]
-
+        
 
         obs = {"pose_step": pose_step,
                "img": gray_scale_img.reshape(-1, 1, self.cfg.camera_h, self.cfg.camera_w),

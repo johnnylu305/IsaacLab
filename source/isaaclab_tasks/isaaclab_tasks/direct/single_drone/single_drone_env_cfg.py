@@ -129,7 +129,6 @@ class MAD3DEnvCfg(DirectRLEnvCfg):
     # simulation
     sim: SimulationCfg = SimulationCfg(
         dt=1/10, # physical simulation step
-        disable_contact_processing=True,
         gravity=(0.0, 0.0, 0.0), # disable gravity
         enable_scene_query_support=False, # disable collision query
         render_interval=decimation

@@ -38,7 +38,7 @@ from isaaclab.envs import DirectRLEnv, ManagerBasedRLEnv
 import sys
 sys.path.append('./')
 from scripts.mad3d.sb3_encoder import CustomCombinedExtractor
-from scripts.standalone.mad3d.sb3_policy_cus import MultiInputActorCriticPolicyCus
+from scripts.mad3d.sb3_policy_cus import MultiInputActorCriticPolicyCus
 """
 Configuration Parser.
 """
@@ -309,6 +309,7 @@ class Sb3VecEnvWrapper(VecEnv):
                 # assume normalized, if not, it won't pass is_image_space, which check [0-255].
                 # for scale like image space that has right shape but not scaled, we will scale it later
                 if is_image_space(obs_space, check_channels=True, normalized_image=True):
+                    print(obs_space)
                     actually_normalized = np.all(obs_space.low == -1.0) and np.all(obs_space.high == 1.0)
                     if not actually_normalized:
                         if np.any(obs_space.low != 0) or np.any(obs_space.high != 255):

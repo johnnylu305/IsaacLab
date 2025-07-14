@@ -63,7 +63,7 @@ from isaaclab.utils.io import dump_pickle, dump_yaml
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
-from isaaclab_tasks.utils.wrappers.sb3 import Sb3VecEnvWrapper, process_sb3_cfg
+from isaaclab_rl.sb3 import Sb3VecEnvWrapper, process_sb3_cfg
 
 
 # RewardLoggingCallback definition
@@ -173,7 +173,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     dump_pickle(os.path.join(log_dir, "params", "env.pkl"), env_cfg)
     dump_pickle(os.path.join(log_dir, "params", "agent.pkl"), agent_cfg)
 
-    agent_cfg = process_sb3_cfg(agent_cfg)
+    agent_cfg = process_sb3_cfg(agent_cfg, env_cfg.scene.num_envs)
     policy_arch = agent_cfg.pop("policy")
     n_timesteps = agent_cfg.pop("n_timesteps")
 
