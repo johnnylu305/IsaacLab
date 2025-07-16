@@ -33,7 +33,7 @@ import time
 import open3d as o3d
 #from pytorch3d.loss import chamfer_distance
 from PIL import Image
-from isaacsim.core import World
+from isaacsim.core.api import World
 from isaacsim.core.utils.stage import add_reference_to_stage
 from isaacsim.core.prims import XFormPrim
 from isaaclab.sensors import CameraCfg, Camera
@@ -137,7 +137,8 @@ def setup_scene(world, scene_path, index, scene_prim_root="/World/Scene"):
     scene = add_reference_to_stage(usd_path=scene_path, prim_path=scene_prim_root)
 
     # define the property of the stage
-    scene_prim = XFormPrim(prim_path=scene_prim_root, translation=[0, 0, 0])
+    enabled=false # Enable this for DLSS
+    scene_prim = XFormPrim(prim_paths_expr=scene_prim_root, translations=[[0, 0, 0]])
 
     # activate the stage
     world.scene.add(scene_prim)
@@ -320,7 +321,7 @@ def run_simulator(sim, scene_entities, agent, hollow_occ_path, gt_pcd_path, cove
     for index in range(NUM_STEPS):
         print("")
         # simulate
-        for _ in range(6):
+        for _ in range(16):
             sim.step()
             camera.update(dt=sim_dt)
 
@@ -735,6 +736,7 @@ def main():
     UsdLux.DomeLight.Define(world.scene.stage, Sdf.Path("/DomeLight")).CreateIntensityAttr(500)    
     
     sim_dt = world.get_physics_dt()
+    # TODO: For IsaacLab 2.1, enable update_latest_camera_pose; otherwise, the camera data will not be updated.
     cameraCfg = CameraCfg(
         prim_path=f"/World/Camera_0",
         offset=CameraCfg.OffsetCfg(pos=(0, 0, 0), convention="world"),
@@ -746,7 +748,8 @@ def main():
                 clipping_range=(0.01, 60.0) # near and far plane in meter
             ),
         width=CAMERA_WIDTH,
-        height=CAMERA_HEIGHT
+        height=CAMERA_HEIGHT,
+        update_latest_camera_pose=True
     )
     scene_entities = {}
     scene_entities[f"camera_0"] = Camera(cameraCfg)
@@ -762,10 +765,10 @@ def main():
         scene_prim_root=f"/World/Scene_{i}"
         scene = add_reference_to_stage(usd_path=scene_path, prim_path=scene_prim_root)
         # define the property of the stage
-        scene_prim = XFormPrim(prim_path=scene_prim_root, name=f"Scene_{i}", translation=TRANS)
+        scene_prim = XFormPrim(prim_paths_expr=scene_prim_root, name=f"Scene_{i}", translations=[TRANS])
         # activate the stage
         world.scene.add(scene_prim)
-        scene_prim_path = scene_prim.prim_path
+        scene_prim_path = scene_prim.prim_paths[0]
 
         # output dir
         output_dir = os.path.dirname(scene_path)
