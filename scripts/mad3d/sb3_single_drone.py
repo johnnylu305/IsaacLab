@@ -105,7 +105,6 @@ class RewardLoggingCallback(BaseCallback):
                             aggregated_train_cus[train_cus_type].append(
                                 (v, current_step - (len(value) - j - 1) * len(infos))
                             )
-
         # Log the aggregated "Episode Reward" information
         for reward_type, values in aggregated_rewards.items():
             mean_reward = sum(values) / len(values)
@@ -192,8 +191,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     if isinstance(env.unwrapped, DirectMARLEnv):
         env = multi_agent_to_single_agent(env)
-
-    env = Sb3VecEnvWrapper(env)
+    # TODO: disable fast variant for extra logs
+    env = Sb3VecEnvWrapper(env, fast_variant=False)
 
     if "normalize_input" in agent_cfg:
         env = VecNormalize(

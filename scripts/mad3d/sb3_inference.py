@@ -46,7 +46,6 @@ from isaacsim.core.utils.prims import delete_prim
 
 
 from stable_baselines3.common.vec_env import VecNormalize
-sys.path.append("/home/dsr/Documents/mad3d/isaac-sim-4.2.0/home/IsaacLab")
 from sb3_ppo_cus import PPO_Cus
 
 
