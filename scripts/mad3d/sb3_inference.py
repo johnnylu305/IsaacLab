@@ -706,7 +706,8 @@ def main():
                     faces_path = os.path.join(directory, "faces.npy")
                     fill_occ_set_path = os.path.join(directory, "fill_occ_set.pkl")
                     #print(os.path.join(directory.replace('preprocess', 'PCD_RF'), "*.ply"))
-                    pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD100K_RF'), "*.ply"))[0]
+                    # TODO: we will make PCD_RF as PCD100K_RF
+                    pcd_path = glob.glob(os.path.join(directory.replace('preprocess', 'PCD_RF'), "*.ply"))[0]
 
                     # Ensure the required files exist
                     if usd_files and os.path.exists(faces_path) and os.path.exists(fill_occ_set_path):

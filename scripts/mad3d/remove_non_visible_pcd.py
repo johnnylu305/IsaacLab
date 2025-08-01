@@ -77,7 +77,7 @@ if __name__ == "__main__":
     parser.add_argument("--pointcloud", required=True, help="Path to the folder containing the point cloud PLY files.")
     parser.add_argument("--occ", required=True, help="Path to the folder containing the occupancy grid files.")
     parser.add_argument("--output", required=True, help="Path to the folder to save the filtered point cloud PLY files.")
-    parser.add_argument("--mode", type=str, choices=["objaverse", "house3k", "omniobject3d", "other"], required=True, help="Mode to specify the dataset type.")
+    parser.add_argument("--mode", type=str, choices=["objaverse", "houses3k", "omniobject3d", "other"], required=True, help="Mode to specify the dataset type.")
 
 
     args = parser.parse_args()

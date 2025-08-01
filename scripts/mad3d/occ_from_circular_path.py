@@ -21,8 +21,8 @@ import glob
 import numpy as np
 import torch
 import omni
-import omni.isaac.lab.sim as sim_utils
-from isaacsim.core import World
+import isaaclab.sim as sim_utils
+from isaacsim.core.api import World
 from isaacsim.core.utils.stage import add_reference_to_stage
 from isaacsim.core.prims import XFormPrim
 from isaaclab.sensors import CameraCfg, Camera
@@ -35,7 +35,7 @@ from PIL import Image
 
 # Env
 GRID_SIZE = 20
-ENV_SIZE = 10
+ENV_SIZE = 20 #10
 # Sensor
 CameraCfg = CameraCfg(
     prim_path="/World/Camera",
@@ -47,6 +47,7 @@ CameraCfg = CameraCfg(
     ),
     width=2000,
     height=2000,
+    update_latest_camera_pose=True
 )
 
 
@@ -79,7 +80,7 @@ def setup_scene(world, scene_path, scene_prim_root="/World/Scene"):
     scene = add_reference_to_stage(usd_path=scene_path, prim_path=scene_prim_root)
 
     # define the property of the stage
-    scene_prim = XFormPrim(prim_path=scene_prim_root, translation=[0, 0, 0])
+    scene_prim = XFormPrim(prim_paths_expr=scene_prim_root, translations=[[0, 0, 0]])
     # activate the stage
     world.scene.add(scene_prim)
     

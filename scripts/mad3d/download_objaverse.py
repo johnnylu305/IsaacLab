@@ -8,10 +8,20 @@ import urllib.request
 import warnings
 from typing import Any, Dict, List, Optional, Tuple
 from tqdm import tqdm
+from concurrent import futures
+
 
 BASE_PATH = '/home/dsr/Documents/mad3d/New_Dataset20/objaverse'
 __version__ = "1.0"
 _VERSIONED_PATH = os.path.join(BASE_PATH, "hf-objaverse-v1")
+
+
+def _download_object_safe(*params):
+    try:
+        return _download_object(*params)     # normal path
+    except Exception as e:
+        print("ERROR", str(e))             # always picklable
+        return
 
 
 def load_annotations(uids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
@@ -181,7 +191,7 @@ def load_objects(uids: List[str], download_processes: int = 1) -> Dict[str, str]
         )
         args = [(*arg, len(args), start_file_count) for arg in args]
         with multiprocessing.Pool(download_processes) as pool:
-            r = pool.starmap(_download_object, args)
+            r = pool.starmap(_download_object_safe, args)
             for uid, local_path in r:
                 out[uid] = local_path
     return out
@@ -221,5 +231,6 @@ if __name__ == "__main__":
     # filter by face, animation, vertexcount...
     cc_by_uids = [uid for uid, annotation in annotations.items() if (annotation["faceCount"] <= 50000) and annotation["animationCount"] <= 0 and annotation['vertexCount'] <=1000]
     
-    objects = load_objects(cc_by_uids, download_processes=10)
+    # reduce download_processes if huggingface limits requests
+    objects = load_objects(cc_by_uids, download_processes=2)
     print(f"Loaded {len(objects)} objects")

@@ -8,7 +8,7 @@ parser = argparse.ArgumentParser(description="Script to remove invalid folders b
 
 # Add custom arguments
 parser.add_argument("--root_directory", type=str, required=True, help="Path to the root directory to process.")
-parser.add_argument("--mode", type=str, choices=["objaverse", "house3k", "omniobject3d", "other"], required=True, help="Mode to specify the dataset type.")
+parser.add_argument("--mode", type=str, choices=["objaverse", "houses3k", "omniobject3d", "other"], required=True, help="Mode to specify the dataset type.")
 
 # Import AppLauncher and append its CLI arguments
 from isaaclab.app import AppLauncher
@@ -250,7 +250,7 @@ def main():
     # Call the function only if mode is 'objaverse'
     if args_cli.mode == "objaverse":
         remove_objaverse_invalid_folders(args_cli.root_directory)
-    elif args_cli.mode == "house3k":
+    elif args_cli.mode == "houses3k":
         remove_house3k_invalid_folders(args_cli.root_directory)
     elif args_cli.mode == "omniobject3d":
         remove_omniobject3d_invalid_folders(args_cli.root_directory)

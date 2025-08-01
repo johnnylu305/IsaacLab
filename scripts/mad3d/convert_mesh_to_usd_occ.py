@@ -45,7 +45,7 @@ import os
 
 import carb
 import glob
-import omni.isaac.core.utils.stage as stage_utils
+import isaacsim.core.utils.stage as stage_utils
 import omni.kit.app
 
 from isaaclab.sim.converters import MeshConverterMAD3D, MeshConverterCfg
