@@ -101,6 +101,17 @@ def get_constraint_actions(prob_grid, actions, h_limit, threshold, env_size):
     offset = nearest_voxel - world_actions.detach()
     new_world_actions = is_world_action_free.unsqueeze(1) * world_actions + (1 - is_world_action_free).unsqueeze(1) * (world_actions + offset)
 
+    #print("World Action:", is_world_action_free)
+    #print(world_actions)
+    #print(offset)
+    # TODO: hard code minimize height
+    print(new_world_actions)
+    print(masked_distances.min())
+    if masked_distances.min() >= 1e6:
+        # 50 cm
+        new_world_actions[0][2] = 0.5
+    print(new_world_actions)
+
     # Convert new_world_actions back to [-1, 1] range in voxel space
     new_actions = (new_world_actions / action_scale_factors) - action_offset
 
